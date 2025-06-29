@@ -1,0 +1,86 @@
+final List<Map<String, dynamic>> productList = [
+  {
+    'name': 'Virtual Interior Design',
+    'price': 30.75,
+    'unit': 'Days',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+  {
+    'name': 'Virtual Home Staging',
+    'price': 38.25,
+    'unit': 'Hours',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+  {
+    'name': 'Office Chair',
+    'price': 70.00,
+    'unit': 'm',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+  {
+    'name': 'Office Lamp',
+    'price': 40.00,
+    'unit': 'mm',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+  {
+    'name': 'Wooden Desk',
+    'price': 120.50,
+    'unit': 'unit',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+  {
+    'name': 'Ergonomic Keyboard',
+    'price': 55.00,
+    'unit': 'piece',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+  {
+    'name': 'Wireless Mouse',
+    'price': 25.75,
+    'unit': 'piece',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+  {
+    'name': 'Floor Mat',
+    'price': 18.00,
+    'unit': 'sqft',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+  {
+    'name': 'Wall Art Frame',
+    'price': 45.90,
+    'unit': 'piece',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+  {
+    'name': 'LED Monitor 24"',
+    'price': 160.00,
+    'unit': 'unit',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+  {
+    'name': 'Conference Table',
+    'price': 250.00,
+    'unit': 'unit',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+  {
+    'name': 'Mini Fridge',
+    'price': 180.00,
+    'unit': 'unit',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+  {
+    'name': 'Water Dispenser',
+    'price': 90.00,
+    'unit': 'unit',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+  {
+    'name': 'Stationery Set',
+    'price': 15.99,
+    'unit': 'pack',
+    'imageUrl': 'assets/placeholder_image.png',
+  },
+];
