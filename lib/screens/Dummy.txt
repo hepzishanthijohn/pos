@@ -1,0 +1,1235 @@
+// file: payment_page.dart
+
+import 'package:flutter/material.dart';
+import 'package:rcspos/screens/paymentsuccesspage.dart';
+
+// ------------------ PAYMENT PAGE --------------------
+
+class PaymentPage extends StatefulWidget {
+  final double totalAmount;
+  final String? customerName;
+  final String? customerPhone;
+
+  const PaymentPage({
+    Key? key,
+    required this.totalAmount,
+    this.customerName,
+    this.customerPhone,
+  }) : super(key: key);
+  @override
+  State<PaymentPage> createState() => _PaymentPageState();
+}
+
+
+
+class _PaymentPageState extends State<PaymentPage> {
+  double cashAmount = 0.0;
+  double bankAmount = 0.0;
+  bool isCashChecked = false;
+  bool isBankChecked = false;
+
+  double get totalPaid => cashAmount + bankAmount;
+  double get returnAmount => totalPaid - widget.totalAmount;
+
+  void _onPaymentChanged(String method, double amount) {
+    setState(() {
+      if (method == 'Cash') {
+        cashAmount = amount;
+      } else if (method == 'Bank') {
+        bankAmount = amount;
+      }
+    });
+  }
+    void _onCheckboxChanged(String method, bool checked) {
+    setState(() {
+      if (method == 'Cash') {
+        isCashChecked = checked;
+        if (!checked) cashAmount = 0.0;
+      } else if (method == 'Bank') {
+        isBankChecked = checked;
+        if (!checked) bankAmount = 0.0;
+      }
+    });
+  }
+
+  void _handlePayment() {
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (context) => const PaymentSuccessPage(),
+    ),
+  );
+}
+
+
+bool get isPaymentReady =>
+    (isCashChecked || isBankChecked) && totalPaid >= widget.totalAmount;
+
+  @override
+  Widget build(BuildContext context) {
+    final String formattedTotal = widget.totalAmount.toStringAsFixed(2);
+
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        backgroundColor: const Color.fromARGB(255, 1, 139, 82)
+,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text('Payment', style: TextStyle(color: Colors.white)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.close, color: Colors.white),
+            onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+          ),
+          const SizedBox(width: 10),
+        ],
+      ),
+ body: Column(
+  children: [
+    // Scrollable content
+    Expanded(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.only(bottom: 16), // Prevent keyboard overlap
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Payment Summary Section
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Payment Summary',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      TextButton(
+                        onPressed: () {
+                          _onCheckboxChanged('Cash', false);
+                          _onCheckboxChanged('Bank', false);
+                          _onPaymentChanged('Cash', 0.0);
+                          _onPaymentChanged('Bank', 0.0);
+                        },
+                        child: const Text('Clear All',
+                            style: TextStyle(color: Color(0xFF4CAF50), fontSize: 16)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              ),
+            ),
+            const Divider(),
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  PaymentOptionTile(
+                    title: 'Cash',
+                    totalAmount: widget.totalAmount,
+                    onAmountChanged: (amount) => _onPaymentChanged('Cash', amount),
+                    onCheckboxChanged: (checked) => _onCheckboxChanged('Cash', checked),
+                  ),
+                  PaymentOptionTile(
+                    title: 'Bank',
+                    totalAmount: widget.totalAmount,
+                    onAmountChanged: (amount) => _onPaymentChanged('Bank', amount),
+                    onCheckboxChanged: (checked) => _onCheckboxChanged('Bank', checked),
+                  ),
+                ],
+              ),
+            ),
+
+            // Customer Section
+          // Customer Section
+Padding(
+  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+  child: Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.customerName ?? 'No Customer Selected',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          Text(
+            widget.customerPhone ?? '',
+            style: const TextStyle(color: Colors.grey, fontSize: 14),
+          ),
+        ],
+      ),
+      TextButton(
+        onPressed: () => print('Change Customer'),
+        child: const Text(
+          'Change',
+          style: TextStyle(color: Color(0xFF4CAF50), fontSize: 16),
+        ),
+      ),
+    ],
+  ),
+),
+
+            const Divider(),
+
+            // Payment Details Section
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  _buildPaymentDetailRow('Total amount to be paid',
+                      '\₹${widget.totalAmount.toStringAsFixed(2)}'),
+                  _buildPaymentDetailRow('Amount paid by Customer',
+                      '\₹${totalPaid.toStringAsFixed(2)}'),
+                _buildPaymentDetailRow(
+  returnAmount < 0 ? 'Remaining Amount' : 'Return Amount',
+  '\₹${returnAmount.abs().toStringAsFixed(2)}'),
+       ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+
+    // Bottom Bar (fixed)
+    Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        border: Border(top: BorderSide(color: Colors.grey[300]!, width: 1.0)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Amt. to be paid',
+                  style: TextStyle(fontSize: 14, color: Colors.grey)),
+              Text('\₹${widget.totalAmount.toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          ElevatedButton(
+            onPressed: isPaymentReady ? _handlePayment : null,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00B0FF),
+              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+            ),
+            child: const Text('Make Payment',
+                style: TextStyle(fontSize: 18, color: Colors.white)),
+          ),
+        ],
+      ),
+    ),
+  ],
+),
+    );
+  }
+
+  Widget _buildPaymentDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 16)),
+          Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+}
+
+// ------------------ PAYMENT OPTION TILE --------------------
+class PaymentOptionTile extends StatefulWidget {
+  final String title;
+  final double totalAmount;
+  final Function(double) onAmountChanged;
+  final Function(bool) onCheckboxChanged;
+
+  const PaymentOptionTile({
+    super.key,
+    required this.title,
+    required this.totalAmount,
+    required this.onAmountChanged,
+    required this.onCheckboxChanged,
+  });
+
+  @override
+  State<PaymentOptionTile> createState() => _PaymentOptionTileState();
+}
+
+class _PaymentOptionTileState extends State<PaymentOptionTile> {
+  bool isChecked = false;
+  bool isExpanded = false;
+  final TextEditingController _amountController = TextEditingController();
+  double change = 0.0;
+
+void _toggleCheckbox(bool? value) {
+  setState(() {
+    isChecked = value ?? false;
+    isExpanded = isChecked;
+    if (!isChecked) {
+      _amountController.clear();
+      widget.onAmountChanged(0.0);
+    }
+  });
+  widget.onCheckboxChanged(isChecked);
+}
+
+void _onAmountChanged(String value) {
+  double entered = double.tryParse(value) ?? 0.0;
+  setState(() {
+    change = entered - widget.totalAmount;
+  });
+  widget.onAmountChanged(entered);
+}
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Header row
+        Row(
+          children: [
+            Checkbox(
+              value: isChecked,
+              onChanged: _toggleCheckbox,
+              activeColor: const Color(0xB3228CF0)
+,
+            ),
+            Expanded(
+              child: Text(widget.title, style: const TextStyle(fontSize: 16)),
+            ),
+            Text(
+              '\₹${widget.totalAmount.toStringAsFixed(2)}',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            IconButton(
+              icon: Icon(
+                isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                color: Colors.teal,
+              ),
+              onPressed: isChecked
+                  ? () => setState(() => isExpanded = !isExpanded)
+                  : null,
+            ),
+          ],
+        ),
+
+        if (isExpanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 32, right: 16, bottom: 8),
+            child: Column(
+              children: [
+                TextField(
+                  controller: _amountController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Amount',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: _onAmountChanged,
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const SizedBox(),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        const Text("Change"),
+                        Text(
+                          change.toStringAsFixed(2),
+                          style: TextStyle(
+                            color: change < 0 ? Colors.red : Colors.green,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        )
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+} 
+
+
+
+
+
+
+
+// file: payment_page.dart
+
+import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'dart:io'; // For HttpHeaders
+import 'package:http/http.dart' as http;
+import 'package:hive/hive.dart';
+import 'package:rcspos/screens/paymentsuccesspage.dart';
+import 'package:rcspos/utils/urls.dart'; // Make sure baseurl is correctly defined here
+
+// Define your consistent color palette
+const Color primaryGreen = Color.fromARGB(255, 1, 139, 82);
+const Color lightGrey = Color(0xFFF0F2F5); // Softer background grey
+const Color mediumGrey = Color(0xFFDCDCDC); // For borders/dividers
+const Color darkText = Color(0xFF2C3E50); // Darker, professional text
+const Color successColor = primaryGreen; // Using primary green for success indicators
+const Color errorColor = Color(0xFFE74C3C); // Stronger red for error/remaining
+
+// ------------------ PAYMENT PAGE --------------------
+
+class PaymentPage extends StatefulWidget {
+  final double totalAmount;
+  final String? customerName;
+  final String? customerPhone;
+
+  const PaymentPage({
+    Key? key,
+    required this.totalAmount,
+    this.customerName,
+    this.customerPhone,
+  }) : super(key: key);
+
+  @override
+  State<PaymentPage> createState() => _PaymentPageState();
+}
+
+class _PaymentPageState extends State<PaymentPage> {
+  // Use a proper model for payment methods, if not already existing, create one
+  // For now, we'll refine the existing Map<String, dynamic> approach for clarity
+  List<Map<String, dynamic>> _paymentMethods = [];
+  final Map<int, double> _paymentAmounts = {};
+  final Map<int, bool> _paymentCheckedStates = {};
+
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchPaymentMethods();
+  }
+
+  // --- API CALL AND DATA HANDLING ---
+  Future<void> _fetchPaymentMethods() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final box = await Hive.openBox('login');
+      final rawSession = box.get('session_id');
+
+      if (rawSession == null) {
+        _errorMessage = 'Session not found. Please log in again.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_errorMessage!)),
+        );
+        return;
+      }
+
+      // Ensure session ID is correctly formatted
+      final sessionId =
+          rawSession.contains('session_id=') ? rawSession : 'session_id=$rawSession';
+      final url = Uri.parse('$baseurl/api/pos.payment.method?query={id,name}');
+
+      final response = await http.get(url, headers: {
+        HttpHeaders.cookieHeader: sessionId,
+        HttpHeaders.contentTypeHeader: 'application/json',
+      });
+
+      if (response.statusCode == 200) {
+        final result = json.decode(response.body)['result'];
+        setState(() {
+          _paymentMethods = List<Map<String, dynamic>>.from(result);
+          // Initialize checked states and amounts for fetched methods
+          for (var method in _paymentMethods) {
+            final methodId = method['id'] as int;
+            _paymentCheckedStates[methodId] = false;
+            _paymentAmounts[methodId] = 0.0;
+          }
+        });
+      } else {
+        _errorMessage =
+            'Failed to load payment methods: ${response.statusCode} - ${response.body}';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_errorMessage!)),
+        );
+      }
+    } on SocketException {
+      _errorMessage =
+          'Network unavailable. Please check your internet connection.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_errorMessage!)),
+      );
+    } catch (e) {
+      _errorMessage = 'An unexpected error occurred: $e';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_errorMessage!)),
+      );
+      debugPrint('Error fetching payment methods: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  // --- CALCULATIONS ---
+  double get totalPaid {
+    double sum = 0.0;
+    _paymentAmounts.forEach((id, amount) {
+      if (_paymentCheckedStates[id] == true) {
+        sum += amount;
+      }
+    });
+    return sum;
+  }
+
+  double get returnAmount => totalPaid - widget.totalAmount;
+
+  // --- STATE MANAGEMENT FOR PAYMENT OPTIONS ---
+  void _onPaymentAmountChanged(int methodId, double amount) {
+    setState(() {
+      _paymentAmounts[methodId] = amount;
+    });
+  }
+
+  void _onCheckboxChanged(int methodId, bool checked) {
+    setState(() {
+      _paymentCheckedStates[methodId] = checked;
+      // When checking, pre-fill with total amount if amount is currently zero
+      if (checked) {
+        final currentAmount = _paymentAmounts[methodId] ?? 0.0;
+        if (currentAmount == 0.0) {
+          _paymentAmounts[methodId] = widget.totalAmount;
+        }
+      } else {
+        _paymentAmounts[methodId] = 0.0;
+      }
+    });
+  }
+
+  void _clearAllPayments() {
+    setState(() {
+      _paymentAmounts.updateAll((key, value) => 0.0);
+      _paymentCheckedStates.updateAll((key, value) => false);
+    });
+  }
+
+  // --- PAYMENT PROCESSING ---
+  bool get isPaymentReady =>
+      _paymentCheckedStates.values.any((v) => v) &&
+      totalPaid >= widget.totalAmount;
+
+  void _handlePayment() {
+    if (!isPaymentReady) return; // Should be handled by button disabled state
+
+    // In a real application, send the selected payment methods and amounts to your backend
+    debugPrint('Processing payment with amounts: $_paymentAmounts');
+
+    // Example payload for the backend (adjust based on your API's needs)
+    List<Map<String, dynamic>> paymentDetails = [];
+    _paymentMethods.forEach((method) {
+      final methodId = method['id'] as int;
+      if (_paymentCheckedStates[methodId] == true) {
+        paymentDetails.add({
+          'payment_method_id': methodId,
+          'amount': _paymentAmounts[methodId],
+          'name': method['name'], // Include name for logging/debugging
+        });
+      }
+    });
+    debugPrint('Payment payload: $paymentDetails');
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const PaymentSuccessPage()),
+    );
+  }
+
+  // --- UI BUILD ---
+  @override
+  Widget build(BuildContext context) {
+    final bool isWideScreen = MediaQuery.of(context).size.width > 700;
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        backgroundColor: primaryGreen,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text('Complete Payment',
+            style: TextStyle(
+                color: Colors.white, fontFamily: "Arial", fontWeight: FontWeight.bold)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.close_rounded, color: Colors.white),
+            onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+          ),
+          const SizedBox(width: 10),
+        ],
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: primaryGreen))
+          : _errorMessage != null
+              ? _buildErrorWidget()
+              : _paymentMethods.isEmpty
+                  ? _buildNoDataWidget()
+                  : isWideScreen
+                      ? _buildWideScreenLayout()
+                      : _buildNarrowScreenLayout(),
+    );
+  }
+
+  // --- Error and No Data Widgets ---
+  Widget _buildErrorWidget() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, color: errorColor, size: 60),
+            const SizedBox(height: 20),
+            Text(
+              'Oops! Something went wrong.\n$_errorMessage',
+              textAlign: TextAlign.center,
+              style:
+                  const TextStyle(fontSize: 18, color: darkText, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 30),
+            ElevatedButton.icon(
+              onPressed: _fetchPaymentMethods,
+              icon: const Icon(Icons.refresh_rounded, size: 24),
+              label: const Text('Try Again', style: TextStyle(fontSize: 18)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryGreen,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                elevation: 5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoDataWidget() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(10.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.info_outline, color: primaryGreen, size: 60),
+            const SizedBox(height: 20),
+            const Text(
+              'No payment methods configured.\nPlease contact support or configure them in your Odoo backend.',
+              textAlign: TextAlign.center,
+              style:
+                  TextStyle(fontSize: 18, color: darkText, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 10),
+            ElevatedButton.icon(
+              onPressed: _fetchPaymentMethods,
+              icon: const Icon(Icons.refresh_rounded, size: 24),
+              label: const Text('Refresh Methods', style: TextStyle(fontSize: 18)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryGreen,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                elevation: 5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- Layout for Narrow Screens (Mobile) ---
+  Widget _buildNarrowScreenLayout() {
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(0.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildPaymentSummaryCard(),
+                const SizedBox(height: 25),
+                _buildCustomerInfoCard(),
+                const SizedBox(height: 25),
+                _buildPaymentDetailsCard(),
+              ],
+            ),
+          ),
+        ),
+        _buildBottomPaymentBar(),
+      ],
+    );
+  }
+
+  // --- Layout for Wide Screens (Tablet/Desktop) ---
+Widget _buildWideScreenLayout() {
+  return Row(
+    crossAxisAlignment: CrossAxisAlignment.start, // Align top of both panels
+    children: [
+      Expanded(
+        flex: 3,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(10.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildPaymentSummaryCard(),
+              const SizedBox(height: 20),
+              _buildCustomerInfoCard(),
+            ],
+          ),
+        ),
+      ),
+      const VerticalDivider(width: 1.5, thickness: 1.5, color: mediumGrey),
+      Expanded(
+        flex: 2,
+        child: Padding(
+          padding: const EdgeInsets.all(10.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min, // Prevents it from expanding vertically
+            children: [
+              _buildPaymentDetailsCard(),
+              const SizedBox(height: 20),
+              Align(
+                alignment: Alignment.center,
+                child: ElevatedButton.icon(
+                  onPressed: isPaymentReady ? _handlePayment : null,
+                  icon: const Icon(Icons.check_circle_rounded, size: 24),
+                  label: const Text('Complete Payment'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryGreen,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                    textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    elevation: 8,
+                    shadowColor: primaryGreen.withOpacity(0.5),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+  // --- Reusable Widget Builders ---
+
+Widget _buildPaymentSummaryCard() {
+  return Padding(
+    padding: const EdgeInsets.all(0.0),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Payment Methods',
+          style: TextStyle(
+            fontSize: 17.5,
+            fontWeight: FontWeight.w600,
+            fontFamily: "Arial",
+            color: darkText.withOpacity(0.9),
+          ),
+        ),
+        const Divider(height: 5, thickness: 1.5, color: mediumGrey),
+
+        _buildPaymentDetailRow(
+          'Total Amount Payable',
+          '\₹${widget.totalAmount.toStringAsFixed(2)}',
+          Colors.black,
+          FontWeight.w500,
+          
+         
+        ),
+        const SizedBox(height: 15),
+
+        // Dynamically generate PaymentOptionTiles
+        ..._paymentMethods.map((method) {
+          final methodId = method['id'] as int;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10.0),
+            child: PaymentOptionTile(
+              key: ValueKey(methodId),
+              title: method['name'] as String,
+              icon: _getIconForPaymentMethod(method['name'] as String),
+              onAmountChanged: (amount) => _onPaymentAmountChanged(methodId, amount),
+              onCheckboxChanged: (checked) => _onCheckboxChanged(methodId, checked),
+              isChecked: _paymentCheckedStates[methodId] ?? false,
+              initialAmount: _paymentAmounts[methodId] ?? 0.0,
+              transactionTotalAmount: widget.totalAmount,
+            ),
+          );
+        }).toList(),
+
+        const Divider(height: 10, thickness: 1.0, color: mediumGrey),
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
+          decoration: BoxDecoration(
+            color: returnAmount < 0
+                ? errorColor.withOpacity(0.1)
+                : successColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: returnAmount < 0
+                  ? errorColor.withOpacity(0.4)
+                  : successColor.withOpacity(0.4),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                returnAmount < 0 ? 'Balance Due' : 'Change Due',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontFamily: "Arial",
+                  color: darkText.withOpacity(0.9),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                '\₹${returnAmount.abs().toStringAsFixed(2)}',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: returnAmount < 0 ? errorColor : successColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+  IconData _getIconForPaymentMethod(String name) {
+    switch (name.toLowerCase()) {
+      case 'cash':
+        return Icons.money_rounded;
+      case 'bank':
+        return Icons.credit_card_rounded;
+      case 'customer account':
+        return Icons.person_rounded;
+      case 'upi':
+        return Icons.qr_code_rounded;
+      default:
+        return Icons.payment_rounded;
+    }
+  }
+
+  Widget _buildCustomerInfoCard() {
+    return Padding(
+      padding: const EdgeInsets.all(0.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+         
+Container(
+  padding: const EdgeInsets.all(16),
+  decoration: BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(12),
+    border: Border.all(color: mediumGrey.withOpacity(0.6), width: 1),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withOpacity(0.03),
+        blurRadius: 5,
+        offset: const Offset(0, 2),
+      ),
+    ],
+  ),
+  child: Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        'Customer Details',
+        style: TextStyle(
+          fontSize: 17,
+          fontWeight: FontWeight.bold,
+          fontFamily: "Arial",
+          color: darkText,
+        ),
+      ),
+      const Divider(height: 20, thickness: 1.2, color: mediumGrey),
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.customerName ?? 'No Customer Selected',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: "Arial",
+                    color: widget.customerName != null ? darkText : Colors.grey[600],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                if (widget.customerPhone != null && widget.customerPhone!.isNotEmpty)
+                  Text(
+                    widget.customerPhone!,
+                    style: const TextStyle(
+                      color: Color.fromARGB(255, 90, 90, 90),
+                      fontSize: 15.5,
+                      fontFamily: "Arial",
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () {
+              debugPrint('Change Customer');
+            },
+            icon: const Icon(Icons.edit_rounded, color: primaryGreen, size: 20),
+            label: const Text(
+              'Change',
+              style: TextStyle(
+                color: primaryGreen,
+                fontSize: 15.5,
+                fontWeight: FontWeight.w600,
+                fontFamily: "Arial",
+              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              side: BorderSide(color: primaryGreen.withOpacity(0.8), width: 1.4),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              backgroundColor: Colors.transparent,
+            ),
+          ),
+        ],
+      ),
+    ],
+  ),
+),
+
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPaymentDetailsCard() {
+    return Padding(
+      padding: const EdgeInsets.all(0.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Transaction Summary',
+              style: TextStyle(
+                  fontSize: 17.5,fontFamily: "Arial", fontWeight: FontWeight.bold, color: darkText.withOpacity(0.9))),
+          const Divider(height: 5, thickness: 1.5, color: mediumGrey),
+          _buildPaymentDetailRow('Total amount to be paid',
+              '\₹${widget.totalAmount.toStringAsFixed(2)}', darkText, FontWeight.bold),
+          _buildPaymentDetailRow('Amount received from Customer',
+              '\₹${totalPaid.toStringAsFixed(2)}', darkText, FontWeight.bold),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomPaymentBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 28.0, vertical: 20.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.18),
+            blurRadius: 20,
+            offset: const Offset(0, -8),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Net Amount', style: TextStyle(fontSize: 17, color: Colors.grey)),
+                Text('\₹${widget.totalAmount.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold, color: darkText)),
+              ],
+            ),
+            ElevatedButton.icon(
+              onPressed: isPaymentReady ? _handlePayment : null,
+              icon: const Icon(Icons.check_circle_rounded, size: 24),
+              label: const Text('Complete Payment'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryGreen,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 25),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                elevation: 8,
+                shadowColor: primaryGreen.withOpacity(0.5),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPaymentDetailRow(
+      String label, String value, Color color, FontWeight fontWeight) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 17,fontFamily: "Arial", color: darkText)),
+          Text(value, style: TextStyle(fontSize: 17.5,fontFamily: "Arial", fontWeight: FontWeight.w600, color: color)),
+        ],
+      ),
+    );
+  }
+}
+
+// ------------------ PAYMENT OPTION TILE --------------------
+class PaymentOptionTile extends StatefulWidget {
+  final String title;
+  final IconData icon;
+  final Function(double) onAmountChanged;
+  final Function(bool) onCheckboxChanged;
+  final bool isChecked;
+  final double initialAmount;
+  final double transactionTotalAmount;
+
+  const PaymentOptionTile({
+    Key? key, // Added Key parameter
+    required this.title,
+    required this.icon,
+    required this.onAmountChanged,
+    required this.onCheckboxChanged,
+    this.isChecked = false,
+    this.initialAmount = 0.0,
+    required this.transactionTotalAmount,
+  }) : super(key: key); // Pass key to super
+
+  @override
+  State<PaymentOptionTile> createState() => _PaymentOptionTileState();
+}
+
+class _PaymentOptionTileState extends State<PaymentOptionTile> {
+  late bool isChecked;
+  late bool isExpanded;
+  late TextEditingController _amountController; // Changed to late and initialized in initState
+
+  @override
+  void initState() {
+    super.initState();
+    isChecked = widget.isChecked;
+    isExpanded = widget.isChecked;
+    _amountController = TextEditingController(
+      text: widget.initialAmount > 0 ? widget.initialAmount.toStringAsFixed(2) : '',
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant PaymentOptionTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isChecked != oldWidget.isChecked) {
+      setState(() {
+        isChecked = widget.isChecked;
+        isExpanded = isChecked;
+        if (!isChecked) {
+          _amountController.clear();
+        } else {
+          // Only pre-fill if the amount is currently 0 or not yet set for this method
+          final currentParsedAmount = double.tryParse(_amountController.text) ?? 0.0;
+          if (currentParsedAmount == 0.0) {
+            _amountController.text = widget.transactionTotalAmount.toStringAsFixed(2);
+          }
+        }
+      });
+    }
+
+    if (widget.initialAmount != oldWidget.initialAmount) {
+      final double currentParsedAmount = double.tryParse(_amountController.text) ?? 0.0;
+      if (widget.initialAmount != currentParsedAmount) {
+        if (widget.initialAmount == 0.0) {
+          _amountController.clear();
+        } else {
+          _amountController.text = widget.initialAmount.toStringAsFixed(2);
+        }
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  void _toggleCheckbox(bool? value) {
+    setState(() {
+      isChecked = value ?? false;
+      isExpanded = isChecked;
+      if (!isChecked) {
+        _amountController.clear();
+        widget.onAmountChanged(0.0);
+      } else {
+        _amountController.text = widget.transactionTotalAmount.toStringAsFixed(2);
+        widget.onAmountChanged(widget.transactionTotalAmount);
+      }
+    });
+    widget.onCheckboxChanged(isChecked);
+  }
+
+  void _onAmountChangedInternal(String value) {
+    double entered = double.tryParse(value) ?? 0.0;
+    widget.onAmountChanged(entered);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        InkWell(
+          onTap: () {
+            _toggleCheckbox(!isChecked);
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(vertical: 5.0, horizontal: 15.0),
+            decoration: BoxDecoration(
+              color:  Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isChecked ? primaryGreen.withOpacity(0.7) : mediumGrey.withOpacity(0.8),
+                width: isChecked ? 1.2 : 1.5,
+              ),
+              boxShadow: isChecked
+                  ? [
+                      BoxShadow(
+                        color: primaryGreen.withOpacity(0.2),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ]
+                  : [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 3,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+            ),
+            child: Row(
+              children: [
+                Checkbox(
+                  value: isChecked,
+                  onChanged: _toggleCheckbox,
+                  activeColor: primaryGreen,
+                  checkColor: Colors.white,
+                  side: BorderSide(color: primaryGreen.withOpacity(0.8), width: 1.5),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                ),
+                const SizedBox(width: 8),
+                Icon(widget.icon,
+                    color: isChecked ? primaryGreen : darkText.withOpacity(0.7), size: 22),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(widget.title,
+                      style: const TextStyle(
+                          fontSize: 15.8,
+                          fontFamily: "Arial",
+                          fontWeight: FontWeight.w500,
+                          color: Color.fromARGB(255, 36, 36, 36))),
+                ),
+                Text(
+                  '\₹${_amountController.text.isNotEmpty && isChecked ? (double.tryParse(_amountController.text) ?? 0.0).toStringAsFixed(2) : '0.00'}',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: darkText),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 12.0),
+                  child: Icon(
+                    isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+                    color: isChecked ? primaryGreen : Colors.grey[700],
+                    size: 20,
+                  ),
+                ),
+              ],
+            ),
+          
+          ),
+        ),
+        if (isExpanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 45, right: 18, top: 15, bottom: 10),
+            child: TextField(
+              controller: _amountController,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: 'Enter Amount',
+                hintText: 'e.g., ${widget.transactionTotalAmount.toStringAsFixed(2)}',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: mediumGrey.withOpacity(0.8), width: 1.0),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: primaryGreen, width: 1.0),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: const Color.fromARGB(255, 27, 27, 27)!, width: 0.7),
+                ),
+                prefixText: '\₹',
+                contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 18),
+                labelStyle: TextStyle(color: const Color.fromARGB(255, 1, 12, 24).withOpacity(0.7), fontSize: 17, fontFamily: "Arial"),
+                hintStyle: TextStyle(color: const Color.fromARGB(255, 121, 120, 120), fontSize: 17),
+              ),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: darkText),
+              onChanged: _onAmountChangedInternal,
+            ),
+          ),
+     
+      ],
+    );
+  }
+}

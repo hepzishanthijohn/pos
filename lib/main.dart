@@ -1,21 +1,25 @@
-// main.dart
+import 'dart:io' show Directory, Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter_native_splash/flutter_native_splash.dart';
-import 'package:hive_flutter/hive_flutter.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:hive/hive.dart';
+import 'package:hive_flutter/hive_flutter.dart'; // 👈 for web-safe init
+import 'package:path_provider/path_provider.dart'; // desktop/mobile only
 import 'package:rcspos/screens/loginpage.dart';
 import 'package:rcspos/screens/home.dart';
+import 'package:rcspos/offlinelineNote.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 void main() async {
-  WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
-  FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
+  WidgetsFlutterBinding.ensureInitialized();
 
-  await Hive.initFlutter();
+  if (kIsWeb) {
+    await Hive.initFlutter(); // ✅ Web safe
+  } else {
+    Directory dir = await getApplicationDocumentsDirectory();
+    Hive.init(dir.path); // ✅ Native platforms only
+  }
+
   await Hive.openBox('login');
-  await Hive.openBox('products');
-  await Hive.openBox('offline_orders');
-
-  FlutterNativeSplash.remove();
 
   runApp(const MyApp());
 }
@@ -31,7 +35,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'OdooPOS',
+      title: 'RCSPOS',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
@@ -47,38 +51,10 @@ class MyApp extends StatelessWidget {
           }
 
           final online = snapshot.data!;
-          final session = Hive.box('login').get('session_id');
-
-          if (online) {
-            return const Login();
-           } 
-          //else if (session != null) {
-          //   return const OfflineWrapper();
-          // } 
-          else {
-            return const OfflineNotice();
-          }
+          // Always show login first
+          return online ? const Login() : const OfflineNotice();
         },
       ),
     );
   }
 }
-
-// screens/offline_notice.dart
-class OfflineNotice extends StatelessWidget {
-  const OfflineNotice({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: Text(
-          'You are offline. Please connect to the internet to login.',
-          style: TextStyle(fontSize: 16, color: Colors.red),
-          textAlign: TextAlign.center,
-        ),
-      ),
-    );
-  }
-}
-

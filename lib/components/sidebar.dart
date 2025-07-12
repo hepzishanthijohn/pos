@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
 import 'package:rcspos/screens/home.dart';
+import 'package:rcspos/screens/productpage.dart';
 import 'package:rcspos/utils/urls.dart';
 
 
@@ -110,24 +111,44 @@ Widget buildCategoryIcon(dynamic imageValue) {
                     ),
                   ),
                 ),
-                ...categories.map((cat) {
-                  return ListTile(
-                    leading: buildCategoryIcon(cat['image_128']),
-                    title: Text(cat['display_name'] ?? 'Unnamed'),
-                  onTap: () {
-  Navigator.pushReplacement(
-    context,
-    MaterialPageRoute(
-      builder: (_) => HomePage(
-        categoryId: cat['id'],
-        categoryName: cat['display_name'],
-      ),
-    ),
-  );
-},
 
-                  );
-                }).toList(),
+  // Static "All Products" menu
+  ListTile(
+    leading: const Icon(Icons.all_inclusive),
+    title: const Text('All Products'),
+    onTap: () {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const HomePage(
+            key: ValueKey('all'), // force rebuild
+            categoryId: null,
+            categoryName: null,
+          ),
+        ),
+      );
+    },
+  ),
+  const Divider(height: 1),
+  ...categories.map((cat) {
+    return ListTile(
+      leading: buildCategoryIcon(cat['image_128']),
+      title: Text(cat['display_name'] ?? 'Unnamed'),
+      onTap: () {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => HomePage(
+              key: ValueKey(cat['id']),
+              categoryId: cat['id'],
+              categoryName: cat['display_name'],
+            ),
+          ),
+        );
+      },
+    );
+  }).toList(),
+
               ],
             ),
     );

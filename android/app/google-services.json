@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "562355947875",
+    "project_id": "rcs-pos-14fff",
+    "storage_bucket": "rcs-pos-14fff.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:562355947875:android:a90e60465ff4a0a14e2b56",
+        "android_client_info": {
+          "package_name": "com.example.rcspos"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDYWhJGWSKF40o4Yq1o2bqtRiHihvXPStA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

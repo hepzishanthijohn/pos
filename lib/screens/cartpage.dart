@@ -1,368 +1,564 @@
-// lib/cart_page.dart
-import 'dart:convert';
-
-
 import 'package:flutter/material.dart';
 import 'package:rcspos/screens/customerpage.dart';
 import 'package:rcspos/screens/paymentpage.dart';
 
-
-Widget buildCartImage(dynamic imageData) {
-  if (imageData is String && imageData != 'false') {
-    try {
-      final decodedBytes = base64Decode(imageData);
-      return Image.memory(
-        decodedBytes,
-        width: 60,
-        height: 60,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) =>
-            const Icon(Icons.broken_image, size: 60, color: Colors.grey),
-      );
-    } catch (_) {
-      return const Icon(Icons.broken_image, size: 60, color: Colors.grey);
-    }
-  } else {
-    return const Icon(Icons.image_not_supported, size: 60, color: Colors.grey);
-  }
-}
 class CartPage extends StatefulWidget {
-  final List<Map<String, dynamic>> cartItems;
-
-  const CartPage({Key? key, required this.cartItems}) : super(key: key);
+  final List<Map<String, dynamic>> cart;
+  final bool showAppBar;
+  final String? customerName;
+ 
+  
+  const CartPage({
+    super.key, 
+    required this.cart,
+    this.customerName, 
+    this.showAppBar = true});
 
   @override
-  _CartPageState createState() => _CartPageState();
+  State<CartPage> createState() => _CartPageState();
 }
 
 class _CartPageState extends State<CartPage> {
-  Customer? selectedCustomer;
+  int? selectedIndex;
+  String? _customerPhone;
+  String inputBuffer = '';
+  String editingField = ''; // 'qty' or 'price'
+  bool isFreshEdit = true; // true = start from current value; false = appending
+  final TextEditingController inputController = TextEditingController();
+final FocusNode inputFocusNode = FocusNode();
 
-  Widget _buildKeypadButton(String text,
-      {IconData? icon,
-      Color backgroundColor = Colors.white,
-      Color textColor = Colors.black87,
-      double fontSize = 24,
-      double iconSize = 24,
-      VoidCallback? onPressed,
-      double aspectRatio = 1.5}) {
-    return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.all(4.0),
-        child: AspectRatio(
-          aspectRatio: aspectRatio,
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: backgroundColor,
-              foregroundColor: textColor,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8)),
-              padding: EdgeInsets.zero,
-            ),
-            onPressed: onPressed ?? () {},
-            child: icon != null
-                ? Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(icon, size: iconSize),
-                      Text(text,
-                          style: TextStyle(fontSize: 12, color: textColor)),
-                    ],
-                  )
-                : FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      text,
-                      style: TextStyle(
-                          fontSize: fontSize,
-                          fontWeight: FontWeight.bold,
-                          color: textColor),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-          ),
-        ),
+int parseStock(dynamic rawStock) {
+  if (rawStock == null) return 0;
+  if (rawStock is int) return rawStock;
+  if (rawStock is double) return rawStock.toInt();
+  if (rawStock is String) return int.tryParse(rawStock) ?? 0;
+  return 0;
+}
+
+void updateCartItem(String value) {
+    if (selectedIndex == null || editingField.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select an item and a field (Qty/Price) first.')),
+      );
+      return;
+    }
+
+    final item = widget.cart[selectedIndex!];
+
+    setState(() {
+      if (editingField == 'qty') {
+        final int? parsedValue = int.tryParse(value);
+        if (parsedValue != null && parsedValue >= 0) {
+          item['quantity'] = parsedValue;
+        } else if (value.isEmpty) {
+          item['quantity'] = 1; // Default to 1 if input cleared
+        }
+      } else if (editingField == 'price') {
+        final double? parsedValue = double.tryParse(value);
+        if (parsedValue != null && parsedValue >= 0) {
+          item['list_price'] = parsedValue;
+        } else if (value.isEmpty) {
+          item['list_price'] = 0.0; // Default to 0.0 if input cleared
+        }
+      }
+      inputBuffer = ''; // Clear buffer after applying
+    });
+  }
+
+void onNumberPressed(String number) {
+  if (selectedIndex == null) return;
+
+  final item = widget.cart[selectedIndex!];
+  final int stock = parseStock(item['qty_available']);
+
+  // Always append
+  String newValue = inputController.text + number;
+  final int? parsed = int.tryParse(newValue);
+
+  if (editingField == 'qty' && parsed != null && parsed > stock) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Max available stock is $stock'),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 2),
       ),
+    );
+    return;
+  }
+
+  setState(() {
+    inputController.text = newValue;
+    inputController.selection = TextSelection.fromPosition(
+      TextPosition(offset: inputController.text.length),
+    );
+    inputBuffer = newValue;
+    applyValueToItem();
+  });
+}
+
+void onDelPressed() {
+  setState(() {
+    if (inputController.text.isNotEmpty) {
+      inputController.text =
+          inputController.text.substring(0, inputController.text.length - 1);
+      inputBuffer = inputController.text;
+    } else {
+      isFreshEdit = true;
+    }
+   inputController.selection = TextSelection.fromPosition(
+  TextPosition(offset: inputController.text.length),
+);
+inputBuffer = inputController.text;
+applyValueToItem();
+
+  });
+}
+
+void applyValueToItem() {
+  if (selectedIndex == null || editingField.isEmpty) return;
+
+  final item = widget.cart[selectedIndex!];
+
+  setState(() {
+    if (editingField == 'qty') {
+      final int? parsed = int.tryParse(inputBuffer);
+
+      // ✅ Updated safe stock parsing
+final int stock = parseStock(item['qty_available']);
+
+
+
+      if (parsed != null) {
+        if (parsed > stock) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Quantity exceeds stock (${stock.toString()})!'),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 2),
+            ),
+          );
+
+          // Reset to max stock
+          inputBuffer = stock.toString();
+          inputController.text = inputBuffer;
+          inputController.selection = TextSelection.fromPosition(
+            TextPosition(offset: inputBuffer.length),
+          );
+          item['quantity'] = stock;
+
+          return;
+        }
+
+        item['quantity'] = parsed;
+      } else if (inputBuffer.isEmpty) {
+        item['quantity'] = 1;
+      }
+    } else if (editingField == 'price') {
+      final double? parsed = double.tryParse(inputBuffer);
+      item['list_price'] = parsed ?? 0.0;
+    }
+  });
+}
+
+void onCustomerPressed() async {
+  final result = await Navigator.push(
+    context,
+    MaterialPageRoute(builder: (context) => CustomerPage()),
+  );
+
+  if (result != null && result is Map<String, dynamic>) {
+   setState(() {
+    _customerName = result['name'] ?? '';
+    _customerPhone = result['phone'] ?? '';
+  });
+  }
+}
+
+String? _customerName;
+
+@override
+void initState() {
+  super.initState();
+  _customerName = widget.customerName;
+  _customerPhone = ''; 
+}
+
+Future<bool> _onWillPop() async {
+  Navigator.pop(context, {
+    'cart': widget.cart,
+    'customerName': _customerName,
+  });
+  return false;
+}
+
+
+  void onDiscPressed() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Discount key pressed!')),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    double total = widget.cartItems.fold(
-        0.0,
-        (sum, item) =>
-            sum + ((item['list_price'] ?? 0.0) * (item['quantity'] ?? 1)));
+void onPaymentPressed() {
+  double total = widget.cart.fold(
+    0.0,
+    (sum, item) => sum + item['list_price'] * item['quantity'],
+  );
 
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: const Color.fromARGB(255, 1, 139, 82),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context, widget.cartItems),
-
-        ),
-        title:
-            const Text('Cart Items', style: TextStyle(color: Colors.white)),
-        actions: [
-          
-          TextButton(
-            onPressed: () {
-               setState(() => widget.cartItems.clear());
-            },
-            child: const Text('Clear', style: TextStyle(color: Colors.white)),
-          ),
-          // IconButton(
-          //   icon: const Icon(Icons.delete_forever, color: Colors.white),
-          //   onPressed: () {
-          //     setState(() => widget.cartItems.clear());
-          //   },
-          // ),
-          const SizedBox(width: 10),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: widget.cartItems.isEmpty
-                ? const Center(child: Text('Your cart is empty.'))
-                : ListView.builder(
-                    itemCount: widget.cartItems.length,
-                    itemBuilder: (context, index) {
-                      final item = widget.cartItems[index];
-                      return Card(
-                         color: Colors.white,
-  margin: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-  elevation: 2,
-  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-  child: Padding(
-    padding: const EdgeInsets.all(12.0),
-    child: Column(
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Product Image
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: buildCartImage(item['image_1920']),
-            ),
-            const SizedBox(width: 10),
-
-            // Name, Price & Remove
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          item['display_name'] ?? 'Unnamed',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close, color: Colors.redAccent),
-                        splashRadius: 20,
-                        onPressed: () {
-                          setState(() {
-                            widget.cartItems.removeAt(index);
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                  Text(
-                    'Price: ₹${(item['list_price'] ?? 0.0).toStringAsFixed(2)}',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 12),
-        const Divider(),
-
-        // Quantity and Total Row
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            // Quantity Controls
-            Container(
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.shade400),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.remove_circle_outline, size: 20),
-                    onPressed: () {
-                      setState(() {
-                        if (item['quantity'] > 1) item['quantity'] -= 1;
-                      });
-                    },
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Text(
-                      '${item['quantity'] ?? 1}',
-                      style: const TextStyle(fontSize: 16),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.add_circle_outline, size: 20),
-                    onPressed: () {
-                      setState(() {
-                        item['quantity'] += 1;
-                      });
-                    },
-                  ),
-                ],
-              ),
-            ),
-
-            // Total Price
-            Text(
-              'Total: ₹${((item['list_price'] ?? 0.0) * (item['quantity'] ?? 1)).toStringAsFixed(2)}',
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
-      ],
+Navigator.push(
+  context,
+  MaterialPageRoute(
+    builder: (context) => PaymentPage(
+      totalAmount: total,
+      customerName: _customerName,       // From your state
+      customerPhone: _customerPhone,     // From your state
     ),
   ),
 );
 
-                    },
-                  ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (selectedCustomer != null)
-                  Text('Customer: ${selectedCustomer!.name}',
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w500)),
-                const SizedBox(height: 4),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Text('Total: ₹${total.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                          fontSize: 20, fontWeight: FontWeight.w500)),
-                ),
+}
+
+void onQtyPressed() {
+  if (selectedIndex == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please select an item first to set quantity.')),
+    );
+    return;
+  }
+
+  final item = widget.cart[selectedIndex!];
+
+  setState(() {
+    editingField = 'qty';
+
+    if (inputBuffer.isEmpty) {
+      inputBuffer = item['quantity'].toString();
+      inputController.text = inputBuffer;
+      inputController.selection = TextSelection.fromPosition(
+        TextPosition(offset: inputBuffer.length),
+      );
+    }
+    isFreshEdit = false; // 🟢 treat as appending
+    FocusScope.of(context).requestFocus(inputFocusNode);
+  });
+}
+
+void onPricePressed() {
+  if (selectedIndex == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please select an item first to set price.')),
+    );
+    return;
+  }
+
+  setState(() {
+    editingField = 'price';
+    final item = widget.cart[selectedIndex!];
+    inputController.text = item['list_price'].toStringAsFixed(2);
+    inputBuffer = item['list_price'].toStringAsFixed(2);
+    isFreshEdit = true;
+    FocusScope.of(context).requestFocus(inputFocusNode);
+  });
+}
+
+
+
+  @override
+  Widget build(BuildContext context) {
+    double total = widget.cart.fold(0.0, (sum, item) => sum + item['list_price'] * item['quantity']);
+
+    String currentInputValue = '';
+    if (inputBuffer.isNotEmpty) {
+      currentInputValue = inputBuffer;
+    } else if (selectedIndex != null) {
+      final selectedItem = widget.cart[selectedIndex!];
+      if (editingField == 'qty') {
+        currentInputValue = selectedItem['quantity'].toString();
+      } else if (editingField == 'price') {
+        currentInputValue = selectedItem['list_price'].toStringAsFixed(2);
+      }
+    } else {
+      currentInputValue = '0';
+    }
+
+    return Scaffold(
+     
+      body: Column(
+        children: [
+
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            color: Colors.grey.shade300,
+            child: Row(
+              children: const [
+                Expanded(flex: 4, child: Text('ITEM NAME', style: TextStyle(fontWeight: FontWeight.bold))),
+                Expanded(flex: 2, child: Text('QTY', style: TextStyle(fontWeight: FontWeight.bold))),
+                Expanded(flex: 2, child: Text('PRICE', style: TextStyle(fontWeight: FontWeight.bold))),
+                Expanded(flex: 2, child: Text('TOTAL', style: TextStyle(fontWeight: FontWeight.bold))),
               ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.all(8.0),
-            color: Colors.grey[200],
-            child: IntrinsicHeight(
+
+          // Table-like rows (UNCHANGED)
+          Expanded(
+            child: ListView.builder(
+              itemCount: widget.cart.length,
+              itemBuilder: (context, index) {
+               final item = widget.cart[index];
+
+                final isSelected = index == selectedIndex;
+                return GestureDetector(
+                 onTap: () => setState(() {
+  selectedIndex = index;
+  inputBuffer = '';
+  editingField = ''; // Clear current editing mode
+}),
+
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    color: isSelected ? Colors.tealAccent.withOpacity(0.2) : null,
+                    child: Row(
+                      children: [
+                        Expanded(flex: 4, child: Text(item['display_name'] ?? '',
+                        style: const TextStyle(fontSize: 17,fontWeight: FontWeight.w600),)),
+                        Expanded(
+                          flex: 2,
+                          child: Text(
+                            '${item['quantity']}',
+                            maxLines: 1, // Prevent overflow for large quantities
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 14,fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                        Expanded(flex: 2, child: Text('₹${item['list_price'].toStringAsFixed(2)}',
+                        style: const TextStyle(fontSize: 14,fontWeight: FontWeight.w500))),
+                        Expanded(flex: 2, child: Text('₹${(item['quantity'] * item['list_price']).toStringAsFixed(2)}',
+                        style: const TextStyle(fontSize: 14,fontWeight: FontWeight.w500))),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // Total (UNCHANGED)
+ Container(
+  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+  color: Colors.grey[200],
+  child: Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      // Customer info (name + phone)
+      Row(
+        children: [
+          const Icon(Icons.person, size: 18, color: Colors.black54),
+          const SizedBox(width: 6),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _customerName != null ? 'Customer: $_customerName' : 'No Customer Selected',
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+              ),
+              if (_customerPhone != null && _customerPhone!.isNotEmpty)
+                Text(
+                  'Phone: $_customerPhone',
+                  style: const TextStyle(fontSize: 13, color: Colors.black54),
+                ),
+            ],
+          ),
+        ],
+      ),
+
+      // Total amount
+      Row(
+        children: [
+          const Icon(Icons.receipt_long, size: 18, color: Colors.black54),
+          const SizedBox(width: 6),
+          Text(
+            'Total: ₹${total.toStringAsFixed(2)}',
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    ],
+  ),
+),
+
+          // Keypad Area
+Flexible(
+  child: Container(
+    height: 270,
+    margin: const EdgeInsets.all(0),
+    decoration: BoxDecoration(
+      color: Colors.grey.shade200,
+      border: Border.all(color: Colors.grey.shade500),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Column(
+      children: [
+        // Input Display
+Container(
+  height: 40,
+  padding: const EdgeInsets.symmetric(horizontal: 10),
+  decoration: BoxDecoration(
+    color: Colors.white,
+    border: Border.all(color: Colors.grey.shade400),
+  ),
+  child: TextField(
+    controller: inputController,
+    focusNode: inputFocusNode,
+    readOnly: false, // ✅ Enable full editing
+    keyboardType: TextInputType.number,
+    decoration: const InputDecoration(
+      border: InputBorder.none,
+      contentPadding: EdgeInsets.only(bottom: 12),
+    ),
+    textAlign: TextAlign.right,
+    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w500),
+    onChanged: (value) {
+      inputBuffer = value;
+      applyValueToItem(); // ✅ live cart update
+    },
+  ),
+),
+
+        // Keypad Grid using Table
+     
+Expanded(
+  child: Row(
+    children: [
+      // Left column (Customer, Payment)
+      Expanded(
+        flex: 1,
+        child: Column(
+          children: [
+            Expanded(child: buildKey('Customer', onTap: onCustomerPressed, icon: Icons.person)),
+            const SizedBox(height: 1),
+            Expanded(child: buildKey('Payment', onTap: onPaymentPressed, icon: Icons.play_arrow)),
+          ],
+        ),
+      ),
+      const SizedBox(width: 1),
+
+      // Right 3x4 grid
+      Expanded(
+        flex: 3,
+        child: Column(
+          children: [
+            Expanded(
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(
-                    flex: 1,
-                    child: Column(
-                      children: [
-                        Expanded(
-                          child: _buildKeypadButton('Customer',
-                              icon: Icons.person,
-                              aspectRatio: 1.0,
-                              onPressed: () async {
-                            final result = await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (context) => SelectCustomerPage()),
-                            );
-                            if (result != null && result is Customer) {
-                              setState(() => selectedCustomer = result);
-                            }
-                          }),
-                        ),
-                        Expanded(
-                          child: _buildKeypadButton('Payment',
-                              icon: Icons.payment,
-                              aspectRatio: 1.0,
-                              onPressed: () async {
-                            await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) =>
-                                    PaymentPage(totalAmount: total),
-                              ),
-                            );
-                          }),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8.0),
-                  Expanded(
-                    flex: 3,
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            _buildKeypadButton('1'),
-                            _buildKeypadButton('2'),
-                            _buildKeypadButton('3'),
-                            _buildKeypadButton('Qty',
-                                backgroundColor: Colors.green,
-                                textColor: Colors.white,
-                                fontSize: 14),
-                          ],
-                        ),
-                        Row(
-                          children: [
-                            _buildKeypadButton('4'),
-                            _buildKeypadButton('5'),
-                            _buildKeypadButton('6'),
-                            _buildKeypadButton('Disc', fontSize: 14),
-                          ],
-                        ),
-                        Row(
-                          children: [
-                            _buildKeypadButton('7'),
-                            _buildKeypadButton('8'),
-                            _buildKeypadButton('9'),
-                            _buildKeypadButton('Price', fontSize: 14),
-                          ],
-                        ),
-                        Row(
-                          children: [
-                            _buildKeypadButton(''),
-                            _buildKeypadButton('0'),
-                            _buildKeypadButton('Del',
-                                backgroundColor: Colors.green,
-                                textColor: Colors.white,
-                                fontSize: 14),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
+                  Expanded(child: buildKey('1', onTap: () => onNumberPressed('1'))),
+                  const SizedBox(width: 1),
+                  Expanded(child: buildKey('2', onTap: () => onNumberPressed('2'))),
+                  const SizedBox(width: 1),
+                  Expanded(child: buildKey('3', onTap: () => onNumberPressed('3'))),
+                  const SizedBox(width: 1),
+                  Expanded(child: buildKey('Qty', onTap: onQtyPressed, isActionKey: true)),
                 ],
               ),
             ),
-          )
-        ],
+            const SizedBox(height: 1),
+            Expanded(
+              child: Row(
+                children: [
+                  Expanded(child: buildKey('4', onTap: () => onNumberPressed('4'))),
+                  const SizedBox(width: 1),
+                  Expanded(child: buildKey('5', onTap: () => onNumberPressed('5'))),
+                  const SizedBox(width: 1),
+                  Expanded(child: buildKey('6', onTap: () => onNumberPressed('6'))),
+                  const SizedBox(width: 1),
+                  Expanded(child: buildKey('Disc', onTap: onDiscPressed, isActionKey: true)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 1),
+            Expanded(
+              child: Row(
+                children: [
+                  Expanded(child: buildKey('7', onTap: () => onNumberPressed('7'))),
+                  const SizedBox(width: 1),
+                  Expanded(child: buildKey('8', onTap: () => onNumberPressed('8'))),
+                  const SizedBox(width: 1),
+                  Expanded(child: buildKey('9', onTap: () => onNumberPressed('9'))),
+                  const SizedBox(width: 1),
+                  Expanded(child: buildKey('Price', onTap: onPricePressed, isActionKey: true)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 1),
+            Expanded(
+              child: Row(
+                children: [
+                  Expanded(child: buildKey('')), // Empty
+                  const SizedBox(width: 1),
+                  Expanded(child: buildKey('0', onTap: () => onNumberPressed('0'))),
+                  const SizedBox(width: 1),
+                  Expanded(child: buildKey('')), // Empty
+                  const SizedBox(width: 1),
+                  Expanded(child: buildKey('Del', onTap: onDelPressed, isDeleteKey: true)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  ),
+),
+     
+      ],
+    ),
+  ),
+),
+     ],
       ),
     );
   }
+
+  // Finalized buildKey for clear colors and borders
+Widget buildKey(
+  String label, {
+  VoidCallback? onTap,
+  IconData? icon,
+  bool isActionKey = false,
+  bool isDeleteKey = false,
+}) {
+  final bool isBlank = label.isEmpty && icon == null;
+
+  Color bgColor = Colors.grey.shade300;
+  Color fgColor = Colors.black;
+  if (isActionKey) {
+    bgColor = const Color(0xFF009688); // Teal
+    fgColor = Colors.white;
+  } else if (isDeleteKey) {
+    fgColor = Colors.black;
+  }
+
+  return InkWell(
+    onTap: isBlank ? null : onTap,
+    child: Container(
+      decoration: BoxDecoration(
+        color: bgColor,
+        border: Border.all(color: Colors.grey.shade600, width: 0.5),
+      ),
+      child: Center(
+        child: icon != null
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 20, color: fgColor),
+                  Text(label, style: TextStyle(fontSize: 14, color: fgColor, fontWeight: FontWeight.w600)),
+                ],
+              )
+            : Text(
+                label,
+                style: TextStyle(fontSize: 16, color: fgColor, fontWeight: FontWeight.w600),
+              ),
+      ),
+    ),
+  );
+}
+
 }
