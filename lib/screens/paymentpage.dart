@@ -1,8 +1,11 @@
 // file: payment_page.dart
 
 import 'package:flutter/material.dart';
-import 'package:razorpay_flutter/razorpay_flutter.dart';
+import 'package:hive/hive.dart';
+import 'package:rcspos/screens/RazorpayPaymentPage.dart';
+import 'package:rcspos/screens/payment_option_tile.dart';
 import 'package:rcspos/screens/paymentsuccesspage.dart';
+import 'package:rcspos/utils/razorpay_web_launcher.dart';
 
 class PaymentPage extends StatefulWidget {
   final double totalAmount;
@@ -29,29 +32,12 @@ class _PaymentPageState extends State<PaymentPage> {
   bool isBankChecked = false;
   bool isCardChecked = false;
 
-  late Razorpay _razorpay;
-
   double get totalPaid => cashAmount + bankAmount + cardAmount;
   double get returnAmount => totalPaid - widget.totalAmount;
 
   bool get isPaymentReady =>
       (isCashChecked || isBankChecked || isCardChecked) &&
       totalPaid >= widget.totalAmount;
-
-  @override
-  void initState() {
-    super.initState();
-    _razorpay = Razorpay();
-    _razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, _handlePaymentSuccess);
-    _razorpay.on(Razorpay.EVENT_PAYMENT_ERROR, _handlePaymentError);
-    _razorpay.on(Razorpay.EVENT_EXTERNAL_WALLET, _handleExternalWallet);
-  }
-
-  @override
-  void dispose() {
-    _razorpay.clear();
-    super.dispose();
-  }
 
   void _onPaymentChanged(String method, double amount) {
     setState(() {
@@ -74,52 +60,60 @@ class _PaymentPageState extends State<PaymentPage> {
       }
     });
   }
+void _handleManualPaymentSuccess() async {
+  final ordersBox = Hive.box('orders');
+
+  final newOrder = {
+    'id': DateTime.now().millisecondsSinceEpoch,
+    'customerName': widget.customerName ?? 'Guest',
+    'customerPhone': widget.customerPhone ?? '',
+    'amount': widget.totalAmount,
+    'paymentMethod': 'Card',
+    'timestamp': DateTime.now().toIso8601String(),
+  };
+
+  await ordersBox.add(newOrder);
+
+  _handlePayment(); // show success screen
+}
 
   void _handlePayment() {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (context) => const PaymentSuccessPage()),
     );
   }
+void storeSuccessfulOrder({
+  required String razorpayPaymentId,
+  required double totalAmount,
+  required String? customerName,
+  required String? customerPhone,
+}) async {
+  final orderData = {
+    'payment_id': razorpayPaymentId,
+    'amount': totalAmount,
+    'customer_name': customerName ?? 'Guest',
+    'customer_phone': customerPhone ?? '',
+    'timestamp': DateTime.now().toIso8601String(),
+  };
 
-  void _startRazorpayPayment() {
-    var options = {
-      'key': 'rzp_test_AqRRFQaXY603FG',
-      'amount': (widget.totalAmount * 100).toInt(),
-      'name': widget.customerName ?? 'Customer',
-      'description': 'POS Payment',
-      'prefill': {
-        'contact': widget.customerPhone ?? '',
-        'email': ''
-      },
-      'currency': 'INR',
-      'theme': {'color': '#228CF0'},
-    };
+  final box = await Hive.openBox('orders');
+  await box.add(orderData);
+}
 
-    try {
-      _razorpay.open(options);
-    } catch (e) {
-      debugPrint('Razorpay Error: $e');
-    }
-  }
+void _startRazorpayPayment() {
+  // Navigate to the RazorpayPaymentPage
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => RazorpayPaymentPage(
+        totalAmount: widget.totalAmount, // Pass the total amount
+        customerName: widget.customerName ?? 'Guest', // Pass the customer name
+        customerPhone: widget.customerPhone ?? '', // Pass the customer phone
+      ),
+    ),
+  );
+}
 
-  void _handlePaymentSuccess(PaymentSuccessResponse response) {
-    setState(() {
-      cardAmount = widget.totalAmount;
-    });
-    _handlePayment();
-  }
-
-  void _handlePaymentError(PaymentFailureResponse response) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Payment Failed')),
-    );
-  }
-
-  void _handleExternalWallet(ExternalWalletResponse response) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('External Wallet selected')),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -148,135 +142,155 @@ class _PaymentPageState extends State<PaymentPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Payment Summary', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        TextButton(
-                          onPressed: () {
-                            _onCheckboxChanged('Cash', false);
-                            _onCheckboxChanged('Bank', false);
-                            setState(() {
-                              isCardChecked = false;
-                              cardAmount = 0.0;
-                            });
-                            _onPaymentChanged('Cash', 0.0);
-                            _onPaymentChanged('Bank', 0.0);
-                          },
-                          child: const Text('Clear All', style: TextStyle(color: Color(0xFF4CAF50), fontSize: 16)),
-                        ),
-                      ],
-                    ),
-                  ),
+                  _buildHeader(),
                   const Divider(),
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      children: [
-                        PaymentOptionTile(
-                          title: 'Cash',
-                          totalAmount: widget.totalAmount,
-                          onAmountChanged: (amount) => _onPaymentChanged('Cash', amount),
-                          onCheckboxChanged: (checked) => _onCheckboxChanged('Cash', checked),
-                        ),
-                        PaymentOptionTile(
-                          title: 'Bank',
-                          totalAmount: widget.totalAmount,
-                          onAmountChanged: (amount) => _onPaymentChanged('Bank', amount),
-                          onCheckboxChanged: (checked) => _onCheckboxChanged('Bank', checked),
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Checkbox(
-                              value: isCardChecked,
-                              onChanged: (checked) {
-                                setState(() {
-                                  isCardChecked = checked ?? false;
-                                });
-                              },
-                            ),
-                            const Expanded(child: Text("Card", style: TextStyle(fontSize: 16))),
-                            ElevatedButton.icon(
-                              onPressed: isCardChecked ? _startRazorpayPayment : null,
-                              icon: const Icon(Icons.payment),
-                              label: const Text("Pay Now"),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.indigo,
-                                foregroundColor: Colors.white,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
+                  _buildPaymentOptions(),
                   const Divider(),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(widget.customerName ?? 'No Customer Selected', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                            Text(widget.customerPhone ?? '', style: const TextStyle(color: Colors.grey, fontSize: 14)),
-                          ],
-                        ),
-                        TextButton(
-                          onPressed: () {},
-                          child: const Text('Change', style: TextStyle(color: Color(0xFF4CAF50), fontSize: 16)),
-                        ),
-                      ],
-                    ),
-                  ),
+                  _buildCustomerInfo(),
                   const Divider(),
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      children: [
-                        _buildPaymentDetailRow('Total amount to be paid', '₹${widget.totalAmount.toStringAsFixed(2)}'),
-                        _buildPaymentDetailRow('Amount paid by Customer', '₹${totalPaid.toStringAsFixed(2)}'),
-                        _buildPaymentDetailRow(
-                          returnAmount < 0 ? 'Remaining Amount' : 'Return Amount',
-                          '₹${returnAmount.abs().toStringAsFixed(2)}',
-                        ),
-                      ],
-                    ),
-                  ),
+                  _buildSummary(),
                 ],
               ),
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-            decoration: BoxDecoration(
-              color: Colors.grey[100],
-              border: Border(top: BorderSide(color: Colors.grey[300]!, width: 1.0)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Amt. to be paid', style: TextStyle(fontSize: 14, color: Colors.grey)),
-                    Text('₹${widget.totalAmount.toStringAsFixed(2)}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                  ],
+          _buildBottomBar(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const Text('Payment Summary', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          TextButton(
+            onPressed: () {
+              _onCheckboxChanged('Cash', false);
+              _onCheckboxChanged('Bank', false);
+              setState(() {
+                isCardChecked = false;
+                cardAmount = 0.0;
+              });
+              _onPaymentChanged('Cash', 0.0);
+              _onPaymentChanged('Bank', 0.0);
+            },
+            child: const Text('Clear All', style: TextStyle(color: Color(0xFF4CAF50), fontSize: 16)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPaymentOptions() {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        children: [
+          PaymentOptionTile(
+            title: 'Cash',
+            totalAmount: widget.totalAmount,
+            onAmountChanged: (amount) => _onPaymentChanged('Cash', amount),
+            onCheckboxChanged: (checked) => _onCheckboxChanged('Cash', checked),
+          ),
+          PaymentOptionTile(
+            title: 'Bank',
+            totalAmount: widget.totalAmount,
+            onAmountChanged: (amount) => _onPaymentChanged('Bank', amount),
+            onCheckboxChanged: (checked) => _onCheckboxChanged('Bank', checked),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Checkbox(
+                value: isCardChecked,
+                onChanged: (checked) {
+                  setState(() {
+                    isCardChecked = checked ?? false;
+                  });
+                },
+              ),
+              const Expanded(child: Text("Card", style: TextStyle(fontSize: 16))),
+              ElevatedButton.icon(
+                onPressed: isCardChecked ? _startRazorpayPayment : null,
+                icon: const Icon(Icons.payment),
+                label: const Text("Pay Now"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.indigo,
+                  foregroundColor: Colors.white,
                 ),
-                ElevatedButton(
-                  onPressed: isPaymentReady ? _handlePayment : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00B0FF),
-                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-                  ),
-                  child: const Text('Make Payment', style: TextStyle(fontSize: 18, color: Colors.white)),
-                ),
-              ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCustomerInfo() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(widget.customerName ?? 'No Customer Selected', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text(widget.customerPhone ?? '', style: const TextStyle(color: Colors.grey, fontSize: 14)),
+            ],
+          ),
+          TextButton(
+            onPressed: () {},
+            child: const Text('Change', style: TextStyle(color: Color(0xFF4CAF50), fontSize: 16)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummary() {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        children: [
+          _buildPaymentDetailRow('Total amount to be paid', '₹${widget.totalAmount.toStringAsFixed(2)}'),
+          _buildPaymentDetailRow('Amount paid by Customer', '₹${totalPaid.toStringAsFixed(2)}'),
+          _buildPaymentDetailRow(
+            returnAmount < 0 ? 'Remaining Amount' : 'Return Amount',
+            '₹${returnAmount.abs().toStringAsFixed(2)}',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        border: Border(top: BorderSide(color: Colors.grey[300]!, width: 1.0)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Amt. to be paid', style: TextStyle(fontSize: 14, color: Colors.grey)),
+              Text('₹${widget.totalAmount.toStringAsFixed(2)}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          ElevatedButton(
+            onPressed: isPaymentReady ? _handlePayment : null,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00B0FF),
+              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
             ),
+            child: const Text('Make Payment', style: TextStyle(fontSize: 18, color: Colors.white)),
           ),
         ],
       ),
@@ -293,113 +307,6 @@ class _PaymentPageState extends State<PaymentPage> {
           Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         ],
       ),
-    );
-  }
-}
-
-class PaymentOptionTile extends StatefulWidget {
-  final String title;
-  final double totalAmount;
-  final Function(double) onAmountChanged;
-  final Function(bool) onCheckboxChanged;
-
-  const PaymentOptionTile({
-    super.key,
-    required this.title,
-    required this.totalAmount,
-    required this.onAmountChanged,
-    required this.onCheckboxChanged,
-  });
-
-  @override
-  State<PaymentOptionTile> createState() => _PaymentOptionTileState();
-}
-
-class _PaymentOptionTileState extends State<PaymentOptionTile> {
-  bool isChecked = false;
-  bool isExpanded = false;
-  final TextEditingController _amountController = TextEditingController();
-  double change = 0.0;
-
-  void _toggleCheckbox(bool? value) {
-    setState(() {
-      isChecked = value ?? false;
-      isExpanded = isChecked;
-      if (!isChecked) {
-        _amountController.clear();
-        widget.onAmountChanged(0.0);
-      }
-    });
-    widget.onCheckboxChanged(isChecked);
-  }
-
-  void _onAmountChanged(String value) {
-    double entered = double.tryParse(value) ?? 0.0;
-    setState(() {
-      change = entered - widget.totalAmount;
-    });
-    widget.onAmountChanged(entered);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Checkbox(
-              value: isChecked,
-              onChanged: _toggleCheckbox,
-              activeColor: const Color(0xB3228CF0),
-            ),
-            Expanded(
-              child: Text(widget.title, style: const TextStyle(fontSize: 16)),
-            ),
-            Text('₹${widget.totalAmount.toStringAsFixed(2)}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            IconButton(
-              icon: Icon(isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down, color: Colors.teal),
-              onPressed: isChecked ? () => setState(() => isExpanded = !isExpanded) : null,
-            ),
-          ],
-        ),
-        if (isExpanded)
-          Padding(
-            padding: const EdgeInsets.only(left: 32, right: 16, bottom: 8),
-            child: Column(
-              children: [
-                TextField(
-                  controller: _amountController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Amount',
-                    border: OutlineInputBorder(),
-                  ),
-                  onChanged: _onAmountChanged,
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const SizedBox(),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        const Text("Change"),
-                        Text(
-                          change.toStringAsFixed(2),
-                          style: TextStyle(
-                            color: change < 0 ? Colors.red : Colors.green,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        )
-                      ],
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-      ],
     );
   }
 }

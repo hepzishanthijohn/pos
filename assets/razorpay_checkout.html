@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Razorpay Payment</title>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+</head>
+<body onload="startPayment()">
+  <script>
+    function startPayment() {
+      var options = {
+        key: 'rzp_test_AqRRFQaXY603FG',
+        amount: 50000,
+        currency: 'INR',
+        name: 'John Doe',
+        description: "POS Payment",
+        prefill: {
+          contact: '9876543210',
+          email: 'john@example.com'
+        },
+        handler: function (response) {
+          window.location.href = "success://payment?payment_id=" + response.razorpay_payment_id;
+        },
+        modal: {
+          ondismiss: function () {
+            window.location.href = "cancel://payment";
+          }
+        }
+      };
+      var rzp = new Razorpay(options);
+      rzp.open();
+    }
+  </script>
+</body>
+</html>

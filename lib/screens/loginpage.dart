@@ -59,10 +59,9 @@ class _CardWrapper extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
+    return Container(
       color: const Color(0xFFFDFBFF), // Optional soft background
-      elevation: 16,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+     
       child: Padding(
         padding: const EdgeInsets.all(32.0),
         child: ConstrainedBox(

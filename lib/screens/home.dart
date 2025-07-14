@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:rcspos/components/bottonnavbar.dart';
 import 'package:rcspos/components/sidebar.dart';
+import 'package:rcspos/data/sampleproduct.dart';
 import 'package:rcspos/screens/cartpage.dart';
 import 'package:rcspos/screens/customerpage.dart';
+import 'package:rcspos/screens/orderspage.dart';
 import 'package:rcspos/screens/productpage.dart';
 import 'package:rcspos/screens/productstablepage.dart';
 
@@ -71,14 +73,24 @@ class _HomePageState extends State<HomePage> {
 Future<void> _onItemTapped(int index) async {
   setState(() => _selectedIndex = index);
 
-  if (index == 2) {
+  if (index == 1) {
+    // Navigate to OrdersPage
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const OrdersPage()),
+    );
+  } else if (index == 2) {
     final updatedCart = await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => Productstablepage(
         onAddToCart: handleAddToCart,
         addedProductIds: addedProductIds,
         searchQuery: _searchQuery,
-        showOnlyInStock: _filterMode == 'in_stock' ? true : _filterMode == 'out_of_stock' ? false : null,
+        showOnlyInStock: _filterMode == 'in_stock'
+            ? true
+            : _filterMode == 'out_of_stock'
+                ? false
+                : null,
       )),
     );
 
@@ -124,7 +136,7 @@ Future<void> _onItemTapped(int index) async {
     return Scaffold(
       key: _scaffoldKey,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(96),
+        preferredSize: const Size.fromHeight(106),
         child: AppBar(
           backgroundColor: const Color.fromARGB(255, 1, 139, 82),
           elevation: 0,

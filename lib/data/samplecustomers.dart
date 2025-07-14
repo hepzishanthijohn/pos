@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
+import 'package:rcspos/data/customerdata.dart';
 import 'package:rcspos/screens/createcustomer.dart';
 import 'package:rcspos/screens/editcustomer.dart';
 import 'package:rcspos/screens/home.dart';
@@ -29,26 +30,26 @@ class Customer {
 
   factory Customer.fromJson(Map<String, dynamic> json) {
     return Customer(
-      id: json['id'],
-      name: json['name'] ?? '',
-      email: json['email'] == false ? null : json['email'],
-      phone: json['phone'] == false ? null : json['phone'],
-      contactAddress: json['contact_address'] ?? '',
-      companyType: json['company_type'] ?? 'person', // Default to 'person' if not provided
+      id: json['id'] as int, // Explicitly cast to int
+      name: json['name'] as String? ?? '', // Handle potential null and cast
+      email: json['email'] == false ? null : json['email'] as String?, // Handle false and cast
+      phone: json['phone'] == false ? null : json['phone'] as String?, // Handle false and cast
+      contactAddress: json['contact_address'] as String? ?? '', // Handle potential null and cast
+      companyType: json['company_type'] as String? ?? 'person', // Default and cast
     );
   }
 }
 
-class CustomerPage extends StatefulWidget {
-  const CustomerPage({Key? key}) : super(key: key);
+class samplecustomerpage extends StatefulWidget {
+  const samplecustomerpage({Key? key}) : super(key: key);
 
   @override
-  State<CustomerPage> createState() => _CustomerPageState();
+  State<samplecustomerpage> createState() => _samplecustomerpageState();
 }
 
-class _CustomerPageState extends State<CustomerPage> {
+class _samplecustomerpageState extends State<samplecustomerpage> {
+  // Corrected type: This should be a List of Customer objects
   List<Customer> customers = [];
-  
   int rowsPerPage = 10;
   int currentPage = 0;
   int? _sortColumnIndex;
@@ -57,98 +58,93 @@ class _CustomerPageState extends State<CustomerPage> {
   String _companyFilter = 'all';
   bool isLoading = false;
 
+
   // State to hold IDs of selected customers
   final Set<int> _selectedCustomerIds = {};
 
-
-  final ScrollController _horizontalHeaderScrollController = ScrollController();
-final ScrollController _horizontalListScrollController = ScrollController();
-
-
-// You might already have this for vertical scrolling, but ensure it's here
-final ScrollController _scrollController = ScrollController();
+  final _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    fetchCustomers();
-     // Synchronize horizontal scroll controllers
-  _horizontalHeaderScrollController.addListener(() {
-    if (_horizontalHeaderScrollController.offset != _horizontalListScrollController.offset) {
-      _horizontalListScrollController.jumpTo(_horizontalHeaderScrollController.offset);
-    }
-  });
+    _initializeData();
+  }
 
-  _horizontalListScrollController.addListener(() {
-    if (_horizontalListScrollController.offset != _horizontalHeaderScrollController.offset) {
-      _horizontalHeaderScrollController.jumpTo(_horizontalListScrollController.offset);
-    }
-  });
+    Future<void> _initializeData() async {
+    setState(() => isLoading = true);
+    await fetchCustomers();
+
+    setState(() => isLoading = false);
   }
 
   @override
   void dispose() {
- _horizontalHeaderScrollController.dispose();
-  _horizontalListScrollController.dispose();
-  _scrollController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
-
-  Future<void> fetchCustomers() async {
+ Future<void> fetchCustomers() async {
     setState(() {
       isLoading = true;
       _selectedCustomerIds.clear(); // Clear selections when data is re-fetched
     });
 
-    final box = await Hive.openBox('login');
-    final rawSession = box.get('session_id');
+    // Simulating static data from 'customersList'
+    final customersList = [
+      {
+        'id': 1,
+        'name': 'John Doe',
+        'email': 'john@example.com',
+        'phone': '1234567890',
+        'contact_address': '1234 Elm St',
+        'company_type': 'person',
+      },
+      {
+        'id': 2,
+        'name': 'Jane Smith',
+        'email': 'jane@example.com',
+        'phone': '9597208238',
+        'contact_address': '5678 Oak St',
+        'company_type': 'company',
+      },
+      // Add more customer data here
+    ];
 
-    if (rawSession == null) {
-      setState(() => isLoading = false);
+    setState(() {
+      // This line will now work correctly as 'customers' is List<Customer>
+      customers = customersList.map((e) => Customer.fromJson(e)).toList();
+      isLoading = false;
+    });
+  }
+
+  void _startPaymentProcessForSelectedCustomers() {
+    if (_selectedCustomerIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Session not found. Please log in again.', style: TextStyle(fontFamily: 'Arial'))),
+        const SnackBar(content: Text('Please select at least one customer to process payment.', style: TextStyle(fontFamily: 'Arial'))),
       );
       return;
     }
 
-    final sessionId = rawSession.contains('session_id=') ? rawSession : 'session_id=$rawSession';
+    final List<Customer> customersToProcess = customers
+        .where((customer) => _selectedCustomerIds.contains(customer.id))
+        .toList();
 
-    final url = Uri.parse(
-        '$baseurl/api/res.partner?query={id,name,email,phone,contact_address,company_type}&filter=[["customer_rank",">=",0]]');
-
-    try {
-      final response = await http.get(url, headers: {
-        HttpHeaders.cookieHeader: sessionId,
-        HttpHeaders.contentTypeHeader: 'application/json',
-      });
-
-      if (response.statusCode == 200) {
-        final result = json.decode(response.body)['result'];
-        setState(() {
-          customers = List<Customer>.from(result.map((e) => Customer.fromJson(e)));
-          currentPage = 0; // Reset pagination when data changes
-          _sortColumnIndex = null; // Reset sort state
-          _sortAscending = true; // Reset sort state
-        });
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load customers: ${response.body}', style: const TextStyle(fontFamily: 'Arial')),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      debugPrint("Error fetching customers: $e");
+    // Ensure there's at least one customer to process before accessing .first
+    if (customersToProcess.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Network error: $e', style: const TextStyle(fontFamily: 'Arial')),
-          backgroundColor: Colors.red,
-        ),
+        const SnackBar(content: Text('Selected customer not found.', style: TextStyle(fontFamily: 'Arial'))),
       );
-    } finally {
-      setState(() => isLoading = false);
+      return;
     }
+
+    debugPrint('Initiating payment process for customer IDs: ${_selectedCustomerIds.toList()}');
+
+    // Pop with the first customer's details
+    Navigator.pop(context, {
+      'id': customersToProcess.first.id,
+      'name': customersToProcess.first.name,
+      'email': customersToProcess.first.email,
+      'phone': customersToProcess.first.phone,
+    });
   }
 
   void _sort(int columnIndex, bool ascending) {
@@ -208,118 +204,14 @@ final ScrollController _scrollController = ScrollController();
     );
   }
 
-  void _confirmDeleteCustomer(Customer customer) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Confirm Deletion', style: TextStyle(fontFamily: 'Arial', fontWeight: FontWeight.bold)),
-        content: Text('Are you sure you want to delete ${customer.name}?', style: const TextStyle(fontFamily: 'Arial')),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.grey[700],
-              textStyle: const TextStyle(fontFamily: 'Arial', fontSize: 16),
-            ),
-            child: const Text('Cancel', style: TextStyle(fontFamily: 'Arial')),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(ctx); // Close dialog
-              await _deleteCustomer(customer.id); // Call delete API
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-              textStyle: const TextStyle(fontFamily: 'Arial', fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            child: const Text('Delete', style: TextStyle(fontFamily: 'Arial')),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _deleteCustomer(int customerId) async {
-    final box = await Hive.openBox('login');
-    final rawSession = box.get('session_id');
-    if (rawSession == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Session not found.', style: TextStyle(fontFamily: 'Arial'))),
-      );
-      return;
-    }
-    final sessionId = rawSession.contains('session_id=') ? rawSession : 'session_id=$rawSession';
-
-    final url = Uri.parse('$baseurl/mobile/delete_customer/$customerId'); // Assuming a delete endpoint
-    try {
-      final response = await http.delete(
-        url,
-        headers: {
-          HttpHeaders.cookieHeader: sessionId,
-          HttpHeaders.contentTypeHeader: 'application/json',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Customer deleted successfully!', style: TextStyle(fontFamily: 'Arial')), backgroundColor: Colors.green),
-        );
-        fetchCustomers(); // Refresh the list
-      } else {
-        final error = json.decode(response.body)['error']['message'] ?? 'Unknown error';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to delete customer: $error', style: TextStyle(fontFamily: 'Arial')), backgroundColor: Colors.red),
-        );
-        debugPrint('Error response: ${response.body}');
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('An error occurred: $e', style: TextStyle(fontFamily: 'Arial'))),
-      );
-      debugPrint('Exception during customer deletion: $e');
-    }
-  }
-
-  void _startPaymentProcessForSelectedCustomers() {
-    if (_selectedCustomerIds.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select at least one customer to process payment.', style: TextStyle(fontFamily: 'Arial'))),
-      );
-      return;
-    }
-
-    // Get the actual Customer objects for the selected IDs if you need more than just IDs on the payment page
-    final List<Customer> customersToProcess = customers
-        .where((customer) => _selectedCustomerIds.contains(customer.id))
-        .toList();
-
-    debugPrint('Initiating payment process for customer IDs: ${_selectedCustomerIds.toList()}');
-
-Navigator.pop(context, {
-  'id': customersToProcess.first.id,
-  'name': customersToProcess.first.name,
-  'email': customersToProcess.first.email,
-  'phone': customersToProcess.first.phone,
-}
-);
-  }
-
-  static const double checkBoxWidth = 40.0;
-static const double snoWidth = 60.0;
-static const double nameWidth = 150.0;
-static const double emailWidth = 200.0;
-static const double phoneWidth = 120.0;
-static const double addressWidth = 250.0;
-static const double companyTypeWidth = 120.0;
-static const double actionsWidth = 100.0;
-static const double minColumnWidth = 80.0;
-
 
   @override
   Widget build(BuildContext context) {
+    // Ensure customers is a List<Customer>
+    final List<Customer> customerList = customers;
+
     // 1. Filtering Logic
-    final filteredCustomers = customers.where((c) {
+    final filteredCustomers = customerList.where((c) {
       final lowerCaseSearchQuery = _searchQuery.toLowerCase();
       final matchesSearch = c.name.toLowerCase().contains(lowerCaseSearchQuery) ||
           (c.email ?? '').toLowerCase().contains(lowerCaseSearchQuery) ||
@@ -371,7 +263,7 @@ static const double minColumnWidth = 80.0;
     final totalPages = (total / rowsPerPage).ceil();
     final startIndex = currentPage * rowsPerPage;
     final endIndex = (startIndex + rowsPerPage).clamp(0, total);
-    final visibleCustomers = filteredCustomers.sublist(startIndex, endIndex);
+    final List<Customer> visibleCustomers = filteredCustomers.sublist(startIndex, endIndex);
 
     // Determine if all visible customers are selected for the header checkbox
     final bool allVisibleCustomersSelected =
@@ -493,146 +385,120 @@ static const double minColumnWidth = 80.0;
       ),
       body: isLoading
           ? const Center(child: CircularProgressIndicator(color: Color.fromARGB(255, 1, 129, 91)))
-        : Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0), // Padding for the whole content
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const SizedBox(height: 16),
+          : Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                     Wrap(
-  spacing: 12,
-  runSpacing: 12,
-  children: [
-    ElevatedButton.icon(
-      onPressed: () async {
-        final result = await showDialog(
-          context: context,
-          barrierColor: Colors.black.withAlpha((0.5 * 255).toInt()),
-          builder: (ctx) => const CreateCustomerPage(),
-        );
-        if (result == true) {
-          fetchCustomers();
-        }
-      },
-      style: ElevatedButton.styleFrom(
-        backgroundColor: const Color.fromARGB(255, 201, 202, 201),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-      ),
-      icon: const Icon(Icons.add, color: Colors.black),
-      label: const Text(
-        'ADD CUSTOMER',
-        style: TextStyle(
-          color: Colors.black,
-          fontFamily: 'Arial',
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    ),
-
-    // Payment Process Button
-    if (_selectedCustomerIds.isNotEmpty)
-      ElevatedButton.icon(
-        onPressed: _startPaymentProcessForSelectedCustomers,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color.fromARGB(255, 1, 129, 91),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-        ),
-        icon: const Icon(Icons.payment, color: Colors.white),
-        label: Text(
-          'Done',
-          style: const TextStyle(
-            color: Colors.white,
-            fontFamily: 'Arial',
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-
-    // Download Button
-    ElevatedButton.icon(
-      onPressed: _showDownloadOptions,
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.blueGrey[700],
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-      ),
-      icon: const Icon(Icons.download, color: Colors.white),
-      label: const Text(
-        'DOWNLOAD',
-        style: TextStyle(
-          color: Colors.white,
-          fontFamily: 'Arial',
-          fontSize: 13,
-        ),
-      ),
-    ),
-  ],
-)
-
+                      ElevatedButton.icon(
+                        onPressed: () async {
+                          final result = await showDialog(
+                            context: context,
+                            barrierColor: Colors.black.withOpacity(0.5),
+                            builder: (ctx) => const CreateCustomerPage(),
+                          );
+                          if (result == true) {
+                            fetchCustomers();
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color.fromARGB(255, 201, 202, 201),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                        ),
+                        icon: const Icon(Icons.add, color: Colors.black),
+                        label: const Text(
+                          'ADD CUSTOMER',
+                          style: TextStyle(color: Colors.black, fontFamily: 'Arial', fontSize: 14, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // --- NEW: Payment Process Button ---
+                      if (_selectedCustomerIds.isNotEmpty) ...[
+                        ElevatedButton.icon(
+                          onPressed: _startPaymentProcessForSelectedCustomers,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color.fromARGB(255, 1, 129, 91), // Green for positive action
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                          ),
+                          icon: const Icon(Icons.payment, color: Colors.white),
+                          label: Text(
+                            'PROCESS PAYMENT (${_selectedCustomerIds.length})',
+                            style: const TextStyle(color: Colors.white, fontFamily: 'Arial', fontSize: 14, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                      ],
+                      // --- End New Button ---
+                      ElevatedButton.icon(
+                        onPressed: _showDownloadOptions,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blueGrey[700],
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                        ),
+                        icon: const Icon(Icons.download, color: Colors.white),
+                        label: const Text(
+                          'DOWNLOAD',
+                          style: TextStyle(color: Colors.white, fontFamily: 'Arial', fontSize: 14),
+                        ),
+                      ),
                     ],
                   ),
-                
                   const SizedBox(height: 16),
 
-                  _buildTableHeader(allVisibleCustomersSelected, visibleCustomers.isNotEmpty, visibleCustomers, _horizontalHeaderScrollController),
-                 Expanded( // This Expanded ensures the ListView takes available vertical space
-                  child: visibleCustomers.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.person_off, size: 48, color: Colors.grey[400]),
-                              const SizedBox(height: 8),
-                              Text(
-                                _searchQuery.isNotEmpty || _companyFilter != 'all'
-                                    ? 'No customers match your criteria.'
-                                    : 'No customers found.',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontFamily: 'Arial',
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : Scrollbar(
-                          controller: _scrollController, // Vertical scrollbar
-                          thumbVisibility: true,
-                          child: ListView.builder(
-                            controller: _scrollController, // Vertical scroll controller
-                            itemCount: visibleCustomers.length,
-                            itemBuilder: (context, index) {
-                              final customer = visibleCustomers[index];
-                              final isSelected = _selectedCustomerIds.contains(customer.id);
-                              return Container(
-                                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-                                decoration: BoxDecoration(
-                                  color: isSelected
-                                      ? Colors.blue.withAlpha((0.1 * 255).toInt())
-                                      : index % 2 == 0
-                                          ? Colors.white
-                                          : Colors.grey.shade50,
-                                  border: Border(
-                                    bottom: BorderSide(color: Colors.grey.shade300),
+                  _buildTableHeader(allVisibleCustomersSelected, visibleCustomers.isNotEmpty, visibleCustomers),
+                  Expanded(
+                    child: visibleCustomers.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.person_off, size: 48, color: Colors.grey[400]),
+                                const SizedBox(height: 8),
+                                Text(
+                                  _searchQuery.isNotEmpty || _companyFilter != 'all'
+                                      ? 'No customers match your criteria.'
+                                      : 'No customers found.',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontFamily: 'Arial',
+                                    color: Colors.grey[600],
                                   ),
                                 ),
-                                // Each row now has its own horizontal scroll view,
-                                // synchronized with the header's scroll.
-                                child: SingleChildScrollView(
-                                  scrollDirection: Axis.horizontal,
-                                  controller: _horizontalListScrollController, // Synchronized controller
+                              ],
+                            ),
+                          )
+                        : Scrollbar(
+                            controller: _scrollController,
+                            thumbVisibility: true,
+                            child: ListView.builder(
+                              controller: _scrollController,
+                              itemCount: visibleCustomers.length,
+                              itemBuilder: (context, index) {
+                                final customer = visibleCustomers[index];
+                                final isSelected = _selectedCustomerIds.contains(customer.id);
+                                return Container(
+                                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                                  decoration: BoxDecoration(
+                                    color: isSelected
+                                        ? Colors.blue.withOpacity(0.1)
+                                        : index % 2 == 0
+                                            ? Colors.white
+                                            : Colors.grey.shade50,
+                                    border: Border(
+                                      bottom: BorderSide(color: Colors.grey.shade300),
+                                    ),
+                                  ),
                                   child: Row(
                                     children: [
                                       SizedBox(
-                                        width: checkBoxWidth, // Use defined constant width
+                                        width: 40,
                                         child: Checkbox(
                                           value: isSelected,
                                           onChanged: (bool? newValue) {
@@ -647,14 +513,14 @@ static const double minColumnWidth = 80.0;
                                           activeColor: const Color.fromARGB(255, 1, 129, 91),
                                         ),
                                       ),
-                                      _buildCell('${startIndex + index + 1}', width: snoWidth),
-                                      _buildCell(customer.name, width: nameWidth),
-                                      _buildCell(customer.email ?? '-', width: emailWidth),
-                                      _buildCell(customer.phone ?? '-', width: phoneWidth),
-                                      _buildCell(customer.contactAddress.replaceAll('\n', ', '), width: addressWidth),
-                                      _buildCompanyTypeCell(customer.companyType, width: companyTypeWidth),
-                                      SizedBox( // Fixed width for actions column
-                                        width: actionsWidth,
+                                      _buildCell('${startIndex + index + 1}', flex: 1),
+                                      _buildCell(customer.name, flex: 2),
+                                      _buildCell(customer.email ?? '-', flex: 2),
+                                      _buildCell(customer.phone ?? '-', flex: 2),
+                                      _buildCell(customer.contactAddress.replaceAll('\n', ', '), flex: 3),
+                                      _buildCompanyTypeCell(customer.companyType),
+                                      Expanded(
+                                        flex: 2,
                                         child: Row(
                                           mainAxisAlignment: MainAxisAlignment.center,
                                           children: [
@@ -662,50 +528,42 @@ static const double minColumnWidth = 80.0;
                                               icon: const Icon(Icons.edit, color: Colors.blue),
                                               tooltip: 'Edit Customer',
                                               onPressed: () async {
-                                                final result = await showDialog(
-                                                  context: context,
-                                                  builder: (ctx) => EditCustomerPage(customer: customer),
-                                                );
-                                                if (result == true) {
-                                                  fetchCustomers();
-                                                }
+                                                // Convert to correct Customer type if needed
+                                                // final dynamic editCustomer = customer;
+                                                // final result = await showDialog(
+                                                //   context: context,
+                                                //   builder: (ctx) => EditCustomerPage(customer: editCustomer),
+                                                // );
+                                                // if (result == true) {
+                                                //   fetchCustomers();
+                                                // }
                                               },
                                             ),
-                                            IconButton(
-                                              icon: const Icon(Icons.delete, size: 20, color: Colors.red),
-                                              tooltip: 'Delete Customer',
-                                              onPressed: () {
-                                                _confirmDeleteCustomer(customer);
-                                              },
-                                            ),
+                                      
                                           ],
                                         ),
                                       ),
                                     ],
                                   ),
-                                ),
-                              );
-                            },
+                                );
+                              },
+                            ),
                           ),
-                        ),
-                ),
-                _buildFooter(total, startIndex, endIndex, totalPages),
-              ],
+                  ),
+                  _buildFooter(total, startIndex, endIndex, totalPages),
+                ],
+              ),
             ),
-          ),
-  );
-}
+    );
+  }
 
-Widget _buildCompanyTypeCell(String type, {required double width}) {
-  final isPerson = type.toLowerCase() == 'person';
-  final capitalizedType = type[0].toUpperCase() + type.substring(1);
+  Widget _buildCompanyTypeCell(String type) {
+    final isPerson = type.toLowerCase() == 'person';
+    final capitalizedType = type[0].toUpperCase() + type.substring(1);
 
-  return SizedBox(
-    width: width,
-    child: Padding( // Add padding
-      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+    return Expanded(
+      flex: 2,
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.center, // Center icon and text
         children: [
           Icon(
             isPerson ? Icons.person : Icons.business,
@@ -713,31 +571,26 @@ Widget _buildCompanyTypeCell(String type, {required double width}) {
             color: const Color.fromARGB(255, 1, 129, 91),
           ),
           const SizedBox(width: 6),
-          Expanded( // Expanded here to allow text to fill remaining space in SizedBox
-            child: Text(
-              capitalizedType,
-              style: const TextStyle(fontSize: 14, fontFamily: 'Arial', color: Colors.black87),
-              overflow: TextOverflow.ellipsis,
-            ),
+          Text(
+            capitalizedType,
+            style: const TextStyle(fontSize: 14, fontFamily: 'Arial', color: Colors.black87),
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
-    ),
-  );
-}
-Widget _buildTableHeader(bool allVisibleCustomersSelected, bool hasVisibleCustomers, List<Customer> currentVisibleCustomers, ScrollController horizontalController) {
-  return ClipRRect(
-    borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-    child: Container(
-      color: const Color.fromARGB(255, 1, 129, 91),
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        controller: horizontalController, // Use the passed horizontal controller
+    );
+  }
+
+  Widget _buildTableHeader(bool allVisibleCustomersSelected, bool hasVisibleCustomers, List<Customer> currentVisibleCustomers) {
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+      child: Container(
+        color: const Color.fromARGB(255, 1, 129, 91),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
         child: Row(
           children: [
             SizedBox(
-              width: checkBoxWidth, // Use defined constant width
+              width: 40,
               child: Checkbox(
                 value: allVisibleCustomersSelected,
                 onChanged: hasVisibleCustomers
@@ -759,16 +612,57 @@ Widget _buildTableHeader(bool allVisibleCustomersSelected, bool hasVisibleCustom
                 checkColor: const Color.fromARGB(255, 1, 129, 91),
               ),
             ),
-            // Pass the defined constant widths to _SortableHeader
-            _SortableHeader(label: 'S.No', width: snoWidth, columnIndex: -1, sortColumnIndex: _sortColumnIndex, ascending: _sortAscending, onSort: (asc) => {}),
-            _SortableHeader(label: 'Name', width: nameWidth, columnIndex: 1, sortColumnIndex: _sortColumnIndex, ascending: _sortAscending, onSort: (asc) => _sort(1, asc)),
-            _SortableHeader(label: 'Email', width: emailWidth, columnIndex: 2, sortColumnIndex: _sortColumnIndex, ascending: _sortAscending, onSort: (asc) => _sort(2, asc)),
-            _SortableHeader(label: 'Phone', width: phoneWidth, columnIndex: 3, sortColumnIndex: _sortColumnIndex, ascending: _sortAscending, onSort: (asc) => _sort(3, asc)),
-            _SortableHeader(label: 'Address', width: addressWidth, columnIndex: 4, sortColumnIndex: _sortColumnIndex, ascending: _sortAscending, onSort: (asc) => _sort(4, asc)),
-            _SortableHeader(label: 'Company Type', width: companyTypeWidth, columnIndex: 5, sortColumnIndex: _sortColumnIndex, ascending: _sortAscending, onSort: (asc) => _sort(5, asc)),
-            SizedBox( // Fixed width for actions column
-              width: actionsWidth,
-              child: const Text(
+            _SortableHeader(
+              label: 'S.No',
+              flex: 1,
+              columnIndex: -1,
+              sortColumnIndex: _sortColumnIndex,
+              ascending: _sortAscending,
+              onSort: (asc) => {},
+            ),
+            _SortableHeader(
+              label: 'Name',
+              flex: 2,
+              columnIndex: 1,
+              sortColumnIndex: _sortColumnIndex,
+              ascending: _sortAscending,
+              onSort: (asc) => _sort(1, asc),
+            ),
+            _SortableHeader(
+              label: 'Email',
+              flex: 2,
+              columnIndex: 2,
+              sortColumnIndex: _sortColumnIndex,
+              ascending: _sortAscending,
+              onSort: (asc) => _sort(2, asc),
+            ),
+            _SortableHeader(
+              label: 'Phone',
+              flex: 2,
+              columnIndex: 3,
+              sortColumnIndex: _sortColumnIndex,
+              ascending: _sortAscending,
+              onSort: (asc) => _sort(3, asc),
+            ),
+            _SortableHeader(
+              label: 'Address',
+              flex: 3,
+              columnIndex: 4,
+              sortColumnIndex: _sortColumnIndex,
+              ascending: _sortAscending,
+              onSort: (asc) => _sort(4, asc),
+            ),
+            _SortableHeader(
+              label: 'Company Type',
+              flex: 2,
+              columnIndex: 5,
+              sortColumnIndex: _sortColumnIndex,
+              ascending: _sortAscending,
+              onSort: (asc) => _sort(5, asc),
+            ),
+            const Expanded(
+              flex: 2,
+              child: Text(
                 'Actions',
                 style: TextStyle(fontWeight: FontWeight.w500, fontFamily: 'Arial', fontSize: 16, color: Colors.white),
                 textAlign: TextAlign.center,
@@ -777,22 +671,20 @@ Widget _buildTableHeader(bool allVisibleCustomersSelected, bool hasVisibleCustom
           ],
         ),
       ),
-    ),
-  );
-}
-Widget _buildCell(String value, {required double width}) {
-  return SizedBox(
-    width: width,
-    child: Padding( // Add padding for better visual spacing
-      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+    );
+  }
+
+  Widget _buildCell(String value, {int flex = 1}) {
+    return Expanded(
+      flex: flex,
       child: Text(
         value,
         style: const TextStyle(fontSize: 14, fontFamily: 'Arial', color: Colors.black87),
         overflow: TextOverflow.ellipsis,
       ),
-    ),
-  );
-}
+    );
+  }
+
   Widget _buildFooter(int total, int start, int end, int totalPages) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -855,21 +747,19 @@ Widget _buildCell(String value, {required double width}) {
       ),
     );
   }
-
 }
 
 class _SortableHeader extends StatelessWidget {
   final String label;
-  final double width; // Changed from flex to width
+  final int flex;
   final int columnIndex;
   final int? sortColumnIndex;
   final bool ascending;
   final ValueChanged<bool> onSort;
 
   const _SortableHeader({
-    super.key,
     required this.label,
-    required this.width, // Now requires a width
+    required this.flex,
     required this.columnIndex,
     required this.sortColumnIndex,
     required this.ascending,
@@ -879,10 +769,11 @@ class _SortableHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isSorted = columnIndex == sortColumnIndex;
-    return SizedBox( // Use SizedBox to give it a fixed width
-      width: width,
+    return Expanded(
+      flex: flex,
       child: InkWell(
         onTap: () {
+          // Prevent sorting for dummy columns if columnIndex is -1
           if (columnIndex != -1) {
             onSort(!(isSorted && ascending));
           }
@@ -890,15 +781,12 @@ class _SortableHeader extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 4.0),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.center, // Always center headers
+            mainAxisAlignment: columnIndex == -1 ? MainAxisAlignment.start : MainAxisAlignment.center,
             children: [
-              Flexible( // Use Flexible to prevent text overflow in header labels
-                child: Text(
-                  label,
-                  style: const TextStyle(fontWeight: FontWeight.w500, fontFamily: 'Arial', fontSize: 16, color: Colors.white),
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
-                ),
+              Text(
+                label,
+                style: const TextStyle(fontWeight: FontWeight.w500, fontFamily: 'Arial', fontSize: 16, color: Colors.white),
+                textAlign: TextAlign.center,
               ),
               if (isSorted)
                 Icon(

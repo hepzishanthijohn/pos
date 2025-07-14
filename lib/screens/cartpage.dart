@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:rcspos/data/samplecustomers.dart';
 import 'package:rcspos/screens/customerpage.dart';
 import 'package:rcspos/screens/paymentpage.dart';
 

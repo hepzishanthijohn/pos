@@ -1,3 +1,4 @@
+// productstablepage.dart
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
@@ -12,7 +13,7 @@ class Productstablepage extends StatefulWidget {
   final int? categoryId;
   final String? categoryName;
   final String searchQuery;
-  final bool? showOnlyInStock;
+  final bool? showOnlyInStock; // This is the filter control from parent
 
   const Productstablepage({
     super.key,
@@ -38,25 +39,53 @@ class _ProductstablepageState extends State<Productstablepage> {
   final TextEditingController _searchController = TextEditingController();
   String _currentSearchQuery = '';
   String _filterLabel = 'All';
-  bool? _currentShowOnlyInStock;
-  Timer? _debounce; // For debouncing search input
+  bool? _currentShowOnlyInStock; // Internal state for the stock filter
+  Timer? _debounce;
 
   // Pagination Variables
-  int _currentPage = 0; // 0-indexed current page
-  int _rowsPerPage = 10; // Number of items to display per page
-  int _totalProducts = 0; // Total count of products from the server
-
-  final Set<int> _selectedCustomerIds = {}; // For row selection, if applicable
+  int _currentPage = 0;
+  int _rowsPerPage = 10;
+  int _totalProducts = 0;
 
   @override
   void initState() {
     super.initState();
     _currentSearchQuery = widget.searchQuery;
     _searchController.text = widget.searchQuery;
-    _currentShowOnlyInStock = widget.showOnlyInStock;
+    _currentShowOnlyInStock = widget.showOnlyInStock; // Initialize from widget
     _setFilterLabel();
 
     _initializeData();
+  }
+
+  @override
+  void didUpdateWidget(covariant Productstablepage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // This is crucial for reacting to parent widget changes
+    bool shouldFetch = false;
+
+    if (widget.searchQuery != oldWidget.searchQuery) {
+      _currentSearchQuery = widget.searchQuery;
+      _searchController.text = widget.searchQuery;
+      _currentPage = 0; // Reset page on search change
+      shouldFetch = true;
+    }
+
+    if (widget.showOnlyInStock != oldWidget.showOnlyInStock) {
+      _currentShowOnlyInStock = widget.showOnlyInStock;
+      _setFilterLabel();
+      _currentPage = 0; // Reset page on filter change
+      shouldFetch = true;
+    }
+
+    if (widget.categoryId != oldWidget.categoryId) {
+      _currentPage = 0; // Reset page on category change
+      shouldFetch = true;
+    }
+
+    if (shouldFetch) {
+      fetchProducts();
+    }
   }
 
   @override
@@ -79,9 +108,16 @@ class _ProductstablepageState extends State<Productstablepage> {
   Future<void> _initializeData() async {
     setState(() => _loading = true);
     await fetchProducts();
-    // No need to set _loading to false here, fetchProducts already handles it.
+    // _loading is set to false in fetchProducts's finally block
   }
+
   Future<void> fetchProducts() async {
+    setState(() {
+      _loading = true;
+      _totalProducts = 0; // Reset total products before fetching
+      products = []; // Clear previous products immediately
+    });
+
     final box = await Hive.openBox('login');
     final rawSession = box.get('session_id');
     if (rawSession == null) {
@@ -93,11 +129,51 @@ class _ProductstablepageState extends State<Productstablepage> {
         ? rawSession
         : 'session_id=$rawSession';
 
-    final apiUrl = widget.categoryId != null
-        ? '${baseurl}api/product.template?query={id,display_name,list_price,qty_available,uom_id}&filter=[["pos_categ_ids","=",${widget.categoryId}]]'
-        : '${baseurl}api/product.template?query={id,display_name,list_price,qty_available,uom_id,taxes_id}';
+    // Build the base query string
+    String queryFields = '{id,display_name,taxes_id{id,name},default_code,categ_id{id,name},list_price,qty_available}';
+    List<List<dynamic>> filters = [];
+
+    // Add category filter if present
+    if (widget.categoryId != null) {
+      filters.add(["pos_categ_ids", "=", widget.categoryId]);
+    }
+
+    // Add search query filter
+    if (_currentSearchQuery.isNotEmpty) {
+      filters.add([
+        "|", // OR condition for display_name or default_code
+        ["display_name", "ilike", _currentSearchQuery],
+        ["default_code", "ilike", _currentSearchQuery]
+      ]);
+    }
+
+    // Add stock filter based on _currentShowOnlyInStock
+    if (_currentShowOnlyInStock == true) {
+      filters.add(["qty_available", ">", 0]); // In Stock
+    } else if (_currentShowOnlyInStock == false) {
+      filters.add(["qty_available", "<=", 0]); // Out of Stock
+    }
+    // If _currentShowOnlyInStock is null, no stock filter is added (shows all)
+
+    // Prepare pagination parameters
+    final int limit = _rowsPerPage;
+    final int offset = _currentPage * _rowsPerPage;
+
+    // Construct the URL with filters, limit, and offset
+    String apiUrl = '${baseurl}api/product.template?query=$queryFields';
+    if (filters.isNotEmpty) {
+      apiUrl += '&filter=${jsonEncode(filters)}';
+    }
+    apiUrl += '&limit=$limit&offset=$offset';
+
+    // For total count (assuming your API supports returning count)
+    String countApiUrl = '${baseurl}api/product.template?count=true';
+    if (filters.isNotEmpty) {
+      countApiUrl += '&filter=${jsonEncode(filters)}';
+    }
 
     try {
+      // Fetch products
       final response = await http.get(
         Uri.parse(apiUrl),
         headers: {
@@ -106,77 +182,76 @@ class _ProductstablepageState extends State<Productstablepage> {
         },
       );
 
-      if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        if (json['result'] is List) {
-          setState(() {
-            products = List<Map<String, dynamic>>.from(json['result']);
-            _loading = false;
-          });
+      // Fetch total count
+      final countResponse = await http.get(
+        Uri.parse(countApiUrl),
+        headers: {
+          HttpHeaders.cookieHeader: sessionId,
+          HttpHeaders.contentTypeHeader: 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200 && countResponse.statusCode == 200) {
+        final jsonProducts = jsonDecode(response.body);
+        final jsonCount = jsonDecode(countResponse.body);
+
+        if (jsonProducts['result'] is List && jsonCount['count'] is int) {
+          if (mounted) { // Check if the widget is still in the tree
+            setState(() {
+              products = List<Map<String, dynamic>>.from(jsonProducts['result']);
+              _totalProducts = jsonCount['count']; // Set total count from API
+            });
+          }
         } else {
-          showError('Invalid response format');
+          showError('Invalid response format for products or count.');
         }
       } else {
-        showError('Failed to load products (${response.statusCode})');
+        showError('Failed to load products (${response.statusCode}) or count (${countResponse.statusCode})');
       }
+    } on SocketException {
+      showError('Network unavailable. Please check your internet connection.');
     } catch (e) {
       showError('Error fetching products: $e');
+      debugPrint('Error fetching products: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false; // Ensure loading is always set to false
+        });
+      }
     }
   }
- 
- 
-  void showError(String message) {
-    setState(() => _loading = false);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-  }
 
-  void _showErrorSnackBar(String message) {
-    if (mounted) { // Check if the widget is still in the tree before showing SnackBar
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.all(8),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-      );
+
+  void showError(String message) {
+    if (mounted) {
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
   void onSort(int columnIndex, bool ascending) {
-    // A temporary list to sort, then update the state with the sorted list.
     List<Map<String, dynamic>> currentProducts = List.from(products);
 
-    if (columnIndex == 1) {
-      // Product Name (Column 1 after S.No)
+    if (columnIndex == 1) { // Product Name
       currentProducts.sort((a, b) {
         final nameA = (a['display_name'] as String? ?? '').toLowerCase();
         final nameB = (b['display_name'] as String? ?? '').toLowerCase();
         return ascending ? nameA.compareTo(nameB) : nameB.compareTo(nameA);
       });
-    } else if (columnIndex == 2) {
-      // Product Code (Column 2 after S.No)
+    } else if (columnIndex == 2) { // Product Code
       currentProducts.sort((a, b) {
-        final codeA = (a['default_code'] is String && a['default_code'] != 'false'
-                ? a['default_code'] as String
-                : '')
-            .toLowerCase();
-        final codeB = (b['default_code'] is String && b['default_code'] != 'false'
-                ? b['default_code'] as String
-                : '')
-            .toLowerCase();
+        final codeA = (a['default_code'] is String && a['default_code'] != 'false' ? a['default_code'] as String : '').toLowerCase();
+        final codeB = (b['default_code'] is String && b['default_code'] != 'false' ? b['default_code'] as String : '').toLowerCase();
         return ascending ? codeA.compareTo(codeB) : codeB.compareTo(codeA);
       });
-    } else if (columnIndex == 3) {
-      // Price (Column 3 after S.No)
+    } else if (columnIndex == 3) { // Price
       currentProducts.sort((a, b) {
         final priceA = (a['list_price'] ?? 0.0).toDouble();
         final priceB = (b['list_price'] ?? 0.0).toDouble();
         return ascending ? priceA.compareTo(priceB) : priceB.compareTo(priceA);
       });
-    } else if (columnIndex == 4) {
-      // Stock (Column 4 after S.No)
+    } else if (columnIndex == 4) { // Stock
       currentProducts.sort((a, b) {
         final stockA = (a['qty_available'] ?? 0).toInt();
         final stockB = (b['qty_available'] ?? 0).toInt();
@@ -185,7 +260,7 @@ class _ProductstablepageState extends State<Productstablepage> {
     }
 
     setState(() {
-      products = currentProducts; // Update the main products list
+      products = currentProducts;
       _sortColumnIndex = columnIndex;
       _sortAscending = ascending;
     });
@@ -196,23 +271,19 @@ class _ProductstablepageState extends State<Productstablepage> {
     return (_totalProducts / _rowsPerPage).ceil();
   }
 
-  // Timer for debouncing search input
-  // Timer? _debounce;
-
   @override
   Widget build(BuildContext context) {
-    // Determine if the screen is compact (like a phone) or wide (like tablet/desktop)
     final bool isCompact = MediaQuery.of(context).size.shortestSide < 600;
 
     final int startIndex = _currentPage * _rowsPerPage;
-    final int endIndex = (startIndex + products.length);
+    final int endIndex = startIndex + products.length;
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
         backgroundColor: const Color.fromARGB(255, 1, 139, 82),
         elevation: 0,
-        toolbarHeight: isCompact ? 100 : 120, // Adjust toolbar height based on screen size
+        toolbarHeight: isCompact ? 100 : 120,
         titleSpacing: 0,
         title: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
@@ -226,19 +297,20 @@ class _ProductstablepageState extends State<Productstablepage> {
                     widget.categoryName ?? 'Products',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: isCompact ? 18 : 22, // Adaptive font size
+                      fontSize: isCompact ? 18 : 22,
                       fontFamily: 'Arial',
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   PopupMenuButton<bool?>(
                     onSelected: (value) {
+                      // Only update internal state here
                       setState(() {
                         _currentShowOnlyInStock = value;
                         _setFilterLabel();
                         _currentPage = 0; // Reset to first page when filter changes
                       });
-                      fetchProducts(); // Fetch data with the new filter
+                      fetchProducts(); // Trigger data fetch with new filter
                     },
                     itemBuilder: (context) => const [
                       PopupMenuItem<bool?>(value: null, child: Text('All Products')),
@@ -273,7 +345,7 @@ class _ProductstablepageState extends State<Productstablepage> {
               ),
               SizedBox(height: isCompact ? 10 : 12),
               Container(
-                height: isCompact ? 40 : 44, // Adaptive search bar height
+                height: isCompact ? 40 : 44,
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(28),
@@ -289,14 +361,14 @@ class _ProductstablepageState extends State<Productstablepage> {
                 child: TextField(
                   controller: _searchController,
                   onChanged: (value) {
-                    _currentPage = 0; // Reset to first page when search query changes
+                    _currentPage = 0;
                     if (_debounce?.isActive ?? false) _debounce!.cancel();
                     _debounce = Timer(const Duration(milliseconds: 500), () {
                       if (_currentSearchQuery != value.toLowerCase()) {
                         setState(() {
                           _currentSearchQuery = value.toLowerCase();
                         });
-                        fetchProducts(); // Fetch data with the new search query
+                        fetchProducts();
                       }
                     });
                   },
@@ -312,7 +384,7 @@ class _ProductstablepageState extends State<Productstablepage> {
                               _searchController.clear();
                               setState(() {
                                 _currentSearchQuery = '';
-                                _currentPage = 0; // Reset to first page on clear
+                                _currentPage = 0;
                               });
                               fetchProducts();
                             },
@@ -323,7 +395,7 @@ class _ProductstablepageState extends State<Productstablepage> {
                   style: TextStyle(fontSize: isCompact ? 15 : 16, fontFamily: 'Arial', color: Colors.black87),
                   textInputAction: TextInputAction.search,
                   onSubmitted: (value) {
-                    _debounce?.cancel(); // Cancel any pending debounce
+                    _debounce?.cancel();
                     if (_currentSearchQuery != value.toLowerCase()) {
                       setState(() {
                         _currentSearchQuery = value.toLowerCase();
@@ -340,7 +412,6 @@ class _ProductstablepageState extends State<Productstablepage> {
       ),
       body: Column(
         children: [
-          // Scrollable product table
           Expanded(
             child: _loading
                 ? const Center(
@@ -349,7 +420,7 @@ class _ProductstablepageState extends State<Productstablepage> {
                       children: [
                         CircularProgressIndicator(color: Color.fromARGB(255, 1, 139, 82)),
                         SizedBox(height: 16),
-                        Text('Loading products...', style: TextStyle(fontSize: 16, color: Colors.grey)),
+                        Text('Loading products...', style: TextStyle(fontSize: 16,fontFamily: "Arial", color: Color.fromARGB(255, 43, 42, 42))),
                       ],
                     ),
                   )
@@ -371,197 +442,235 @@ class _ProductstablepageState extends State<Productstablepage> {
                         ),
                       )
                     : SingleChildScrollView(
-                        scrollDirection: Axis.horizontal, // Allows horizontal scrolling for the table
+                        scrollDirection: Axis.horizontal,
                         child: ConstrainedBox(
                           constraints: BoxConstraints(
-                            // Ensure DataTable takes full width available or minimum required width
                             minWidth: MediaQuery.of(context).size.width,
                           ),
-                    child: SizedBox(
-                      height: MediaQuery.of(context).size.height * 0.6, // Adjust height as needed
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.vertical,
-                        child: DataTable(
-                          sortColumnIndex: _sortColumnIndex,
-                          sortAscending: _sortAscending,
-                          columnSpacing: isCompact ? 10 : 20, // Adaptive column spacing
-                          dataRowHeight: isCompact ? 60 : 70, // Adaptive row height
-                          headingRowHeight: isCompact ? 50 : 56, // Adaptive heading row height
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.grey.withOpacity(0.25),
-                                spreadRadius: 1,
-                                blurRadius: 8,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          headingRowColor: MaterialStateProperty.all(Colors.grey[100]),
-                          columns: [
-                            DataColumn(
-                              label: const Text('S.No', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87)),
-                            ),
-                            DataColumn(
-                              label: const Text('Product Name', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87)),
-                              onSort: onSort,
-                            ),
-                            DataColumn(
-                              label: const Text('Code', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87)),
-                              onSort: onSort,
-                            ),
-                            DataColumn(
-                              label: const Text('Price', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87)),
-                              numeric: true,
-                              onSort: onSort,
-                            ),
-                            DataColumn(
-                              label: const Text('Stock', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87)),
-                              numeric: true,
-                              onSort: onSort,
-                            ),
-                            DataColumn(
-                              label: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87)),
-                            ),
-                          ],
-                          rows: products.asMap().entries.map((entry) {
-                            final index = entry.key;
-                            final product = entry.value;
-                            final serialNumber = _currentPage * _rowsPerPage + index + 1;
-                            final price = (product['list_price'] ?? 0.0).toDouble();
-                            final code = product['default_code'] is String && product['default_code'] != 'false'
-                                ? product['default_code'] as String
-                                : '-';
-                            final stock = (product['qty_available']?.toInt() ?? 0).toInt();
-                            final productId = product['id'];
-                            final inCart = widget.addedProductIds.contains(productId);
-                            final unit =
-                                (product['uom_id'] is List && product['uom_id'].length > 1) ? '/${product['uom_id'][1]}' : '';
+                          child: SizedBox(
+                            height: MediaQuery.of(context).size.height * 0.6,
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.vertical,
+                              child: DataTable(
+                                sortColumnIndex: _sortColumnIndex,
+                                sortAscending: _sortAscending,
+                                columnSpacing: isCompact ? 10 : 20,
+                                dataRowHeight: isCompact ? 60 : 70,
+                                headingRowHeight: isCompact ? 50 : 56,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(12),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.grey.withOpacity(0.25),
+                                      spreadRadius: 1,
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                headingRowColor: MaterialStateProperty.all(Colors.grey[100]),
+                                columns: [
+                                   DataColumn(
+                                    label: const Text('S.No', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
+                                  ),
+                                  DataColumn(
+                                    label: const Text('Product Name', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
+                                    onSort: onSort,
+                                  ),
+                                  DataColumn(
+                                    label: const Text('Product Code', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
+                                    onSort: onSort,
+                                  ),
+                                  DataColumn(
+                                    label: const Text('Category', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
+                                    onSort: onSort,
+                                  ),
+                                  DataColumn(
+                                    label: const Text('Price', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
+                                    numeric: true,
+                                    onSort: onSort,
+                                  ),
+                                  DataColumn(
+                                    label: const Text('Gst', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
+                                    numeric: true,
+                                    onSort: onSort,
+                                  ),
+                                  DataColumn(
+                                    label: const Text('Stock', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
+                                    numeric: true,
+                                    onSort: onSort,
+                                  ),
+                                  DataColumn(
+                                    label: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
+                                  ),
+                                ],
+                                rows: products.asMap().entries.map((entry) {
+                                  final index = entry.key;
+                                  final product = entry.value;
+                                  final serialNumber = _currentPage * _rowsPerPage + index + 1;
+                                  final price = (product['list_price'] ?? 0.0).toDouble();
+                                  final code = product['default_code'] is String && product['default_code'] != 'false'
+                                      ? product['default_code'] as String
+                                      : '-';
+                                  final stock = (product['qty_available']?.toInt() ?? 0).toInt();
+                                  final productId = product['id'];
+                                  final inCart = widget.addedProductIds.contains(productId);
+                                  final unit =
+                                      (product['uom_id'] is List && product['uom_id'].length > 1) ? '/${product['uom_id'][1]} técnicos' : '';
+ final category = product['categ_id'] is Map && product['categ_id']['name'] != null
+    ? product['categ_id']['name'] as String // Explicitly cast to String
+    : 'No Category';
 
-                            return DataRow(
-                              cells: [
-                                DataCell(Text(serialNumber.toString(),
-                                    style: TextStyle(fontSize: isCompact ? 13 : 14, fontFamily: 'Arial', color: Colors.black87))),
-                                DataCell(
-                                  Row(
-                                    children: [
-                                      // buildProductImage(product['image_128']),
-                                      // SizedBox(width: isCompact ? 8 : 10),
-                                      Expanded(
-                                        child: Text(
-                                          product['display_name'] ?? 'Unnamed',
-                                          style: TextStyle(fontSize: isCompact ? 13 : 14, fontFamily: 'Arial', color: Colors.black87),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
+final taxListRaw = (product['taxes_id'] is List)
+    ? (product['taxes_id'] as List)
+        .map((tax) {
+          // Check if 'tax' element is a Map and has a 'name' key
+          if (tax is Map && tax['name'] != null) {
+            return tax['name'] as String; // Explicitly cast to String
+          } else if (tax is int) { // Handle cases where tax might just be an ID (though your API sends map)
+            return 'Tax ID: $tax'; // Or fetch its name if needed
+          }
+          return 'N/A Tax Item'; // Default for other unexpected types
+        })
+        .where((name) => name != 'N/A Tax Item' && !name.startsWith('Tax ID: ')) // Filter out internal placeholders
+        .join(', '):"s";
+
+final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
+
+// print('Category: $category');
+// print('Tax List: $taxList');
+
+
+                                  return DataRow(
+                                    cells: [
+                                      DataCell(Text(serialNumber.toString(),
+                                          style: TextStyle(fontSize: isCompact ? 13 : 14, fontFamily: 'Arial', color: Colors.black87))),
+                                     
+                                
+                                      DataCell(
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(
+                                                product['display_name'] ?? 'Unnamed',
+                                                style: TextStyle(fontSize: isCompact ? 13 : 14, fontFamily: 'Arial', color: Colors.black87),
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
-                                    ],
-                                  ),
-                                ),
-                                DataCell(Text(code,
-                                    style: TextStyle(
-                                        fontSize: isCompact ? 13 : 14,
-                                        fontFamily: 'Arial',
-                                        color: const Color.fromARGB(255, 68, 64, 64)))),
-                                DataCell(Text('₹${price.toStringAsFixed(2)}$unit',
-                                    style: TextStyle(
-                                        fontSize: isCompact ? 13 : 14,
-                                        fontFamily: 'Arial',
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.black87))),
-                                DataCell(
-                                  Container(
-                                    padding: EdgeInsets.symmetric(horizontal: isCompact ? 8 : 10, vertical: isCompact ? 4 : 6),
-                                    decoration: BoxDecoration(
-                                      color: stock > 0 ? Colors.green.shade50 : Colors.red.shade50,
-                                      borderRadius: BorderRadius.circular(6),
-                                      border: Border.all(color: stock > 0 ? Colors.green.shade200 : Colors.red.shade200),
-                                    ),
-                                    child: Text(
-                                      stock > 0 ? '$stock In Stock' : 'Out of Stock',
-                                      style: TextStyle(
-                                        fontSize: isCompact ? 11 : 13,
-                                        fontWeight: FontWeight.w600,
-                                        fontFamily: 'Arial',
-                                        color: stock > 0 ? Colors.green.shade800 : Colors.red.shade800,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                DataCell(
-                                  inCart
-                                      ? Container(
-                                          padding: EdgeInsets.symmetric(horizontal: isCompact ? 10 : 12, vertical: isCompact ? 5 : 6),
+                                      DataCell(Text(code,
+                                          style: TextStyle(
+                                              fontSize: isCompact ? 13 : 14,
+                                              fontFamily: 'Arial',
+                                              color: const Color.fromARGB(255, 68, 64, 64)))),
+                                      DataCell(Text(category,
+                                          style: TextStyle(
+                                              fontSize: isCompact ? 13 : 14,
+                                              fontFamily: 'Arial',
+                                              color: const Color.fromARGB(255, 68, 64, 64)))),        
+                                      DataCell(Text('₹${price.toStringAsFixed(2)}$unit',
+                                          style: TextStyle(
+                                              fontSize: isCompact ? 13 : 14,
+                                              fontFamily: 'Arial',
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.black87))),
+                                    DataCell(Text(taxList,
+                                          style: TextStyle(
+                                              fontSize: isCompact ? 13 : 14,
+                                              fontFamily: 'Arial',
+                                              color: const Color.fromARGB(255, 68, 64, 64)))),   
+                                      DataCell(
+                                        Container(
+                                          padding: EdgeInsets.symmetric(horizontal: isCompact ? 8 : 10, vertical: isCompact ? 4 : 6),
                                           decoration: BoxDecoration(
-                                            color: Colors.blue.shade100,
-                                            borderRadius: BorderRadius.circular(8),
-                                            border: Border.all(color: Colors.blue.shade300),
+                                            color: stock > 0 ? Colors.green.shade50 : Colors.red.shade50,
+                                            borderRadius: BorderRadius.circular(6),
+                                            border: Border.all(color: stock > 0 ? Colors.green.shade200 : Colors.red.shade200),
                                           ),
                                           child: Text(
-                                            'In Cart',
+                                            stock > 0 ? '$stock In Stock' : 'Out of Stock',
                                             style: TextStyle(
-                                              color: Colors.blueAccent,
-                                              fontSize: isCompact ? 12 : 13,
-                                              fontWeight: FontWeight.bold,
+                                              fontSize: isCompact ? 11 : 13,
+                                              fontWeight: FontWeight.w600,
+                                              fontFamily: 'Arial',
+                                              color: stock > 0 ? Colors.green.shade800 : Colors.red.shade800,
                                             ),
                                           ),
-                                        )
-                                      : ElevatedButton.icon(
-                                          onPressed: stock > 0
-                                              ? () {
-                                                  widget.onAddToCart({...product, 'quantity': 1});
-                                                  setState(() {
-                                                    widget.addedProductIds.add(productId);
-                                                    cartQuantities[productId] = 1;
-                                                  });
-                                                }
-                                              : null, // Disable button if out of stock
-                                          icon: Icon(Icons.add_shopping_cart,
-                                              size: isCompact ? 16 : 18, color: stock > 0 ? Colors.white : Colors.grey[400]),
-                                          label: Text('Add',
-                                              style: TextStyle(
-                                                  fontSize: isCompact ? 12 : 14,
-                                                  color: stock > 0 ? Colors.white : Colors.grey[400])),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor:
-                                                stock > 0 ? const Color.fromARGB(255, 1, 139, 82) : Colors.grey[200],
-                                            foregroundColor: Colors.white,
-                                            padding: EdgeInsets.symmetric(horizontal: isCompact ? 10 : 15, vertical: isCompact ? 6 : 8),
-                                            textStyle: const TextStyle(fontFamily: 'Arial'),
-                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                            elevation: stock > 0 ? 3 : 0,
-                                            shadowColor: Colors.black.withOpacity(0.2),
-                                          ),
                                         ),
-                                ),
-                              ],
-                            );
-                          }).toList(),
-                        ),
+                                      ),
+                                      DataCell(
+                                        inCart
+                                            ? Container(
+                                                padding: EdgeInsets.symmetric(horizontal: isCompact ? 10 : 12, vertical: isCompact ? 5 : 6),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.blue.shade100,
+                                                  borderRadius: BorderRadius.circular(8),
+                                                  border: Border.all(color: Colors.blue.shade300),
+                                                ),
+                                                child: Text(
+                                                  'In Cart',
+                                                  style: TextStyle(
+                                                    color: Colors.blueAccent,
+                                                    fontSize: isCompact ? 12 : 13,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              )
+                                            : ElevatedButton.icon(
+                                                onPressed: stock > 0
+                                                    ? () {
+                                                        widget.onAddToCart({...product, 'quantity': 1});
+                                                        setState(() {
+                                                          widget.addedProductIds.add(productId);
+                                                          cartQuantities[productId] = 1;
+                                                        });
+                                                      }
+                                                    : null,
+                                                icon: Icon(Icons.add_shopping_cart,
+                                                    size: isCompact ? 16 : 18, color: stock > 0 ? Colors.white : Colors.grey[400]),
+                                                label: Text('Add',
+                                                    style: TextStyle(
+                                                        fontSize: isCompact ? 12 : 14,
+                                                        color: stock > 0 ? Colors.white : Colors.grey[400])),
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor:
+                                                      stock > 0 ? const Color.fromARGB(255, 1, 139, 82) : Colors.grey[200],
+                                                  foregroundColor: Colors.white,
+                                                  padding: EdgeInsets.symmetric(horizontal: isCompact ? 10 : 15, vertical: isCompact ? 6 : 8),
+                                                  textStyle: const TextStyle(fontFamily: 'Arial'),
+                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                                  elevation: stock > 0 ? 3 : 0,
+                                                  shadowColor: Colors.black.withOpacity(0.2),
+                                                ),
+                                              ),
+                                      ),
+                                    ],
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
           ),
-                    ),
-                  ),
-          
-          
-
-          // Fixed footer (pagination)
           if (!_loading && _totalProducts > 0)
             _buildFooter(
               _totalProducts,
               startIndex,
               endIndex,
               _totalPages,
-              isCompact, // Pass isCompact to the footer
+              isCompact,
             ),
         ],
       ),
     );
   }
 
+  // ... (buildProductImage and _buildFooter methods are the same)
   Widget buildProductImage(dynamic imageData) {
     if (imageData is! String || imageData.isEmpty || imageData == 'false') {
       return Container(
@@ -604,7 +713,7 @@ class _ProductstablepageState extends State<Productstablepage> {
           borderRadius: BorderRadius.circular(6),
           border: Border.all(color: Colors.grey.shade200),
         ),
-        child: const Icon(Icons.error_outline, size: 28, color: Colors.grey), // Fallback for decoding errors
+        child: const Icon(Icons.error_outline, size: 28, color: Colors.grey),
       );
     }
   }
@@ -619,16 +728,15 @@ class _ProductstablepageState extends State<Productstablepage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
       color: Colors.white,
-      height: isCompact ? 60 : 70, // Adaptive height for the footer
+      height: isCompact ? 60 : 70,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // Rows per page dropdown
           Row(
             children: [
               Text(
                 'Rows per page:',
-                style: TextStyle(fontSize: isCompact ? 13 : 14, color: Colors.black87),
+                style: TextStyle(fontSize: isCompact ? 13 : 14, color: Colors.black87,fontFamily: "Arial",),
               ),
               SizedBox(width: isCompact ? 8 : 10),
               DropdownButton<int>(
@@ -643,7 +751,7 @@ class _ProductstablepageState extends State<Productstablepage> {
                   if (value != null) {
                     setState(() {
                       _rowsPerPage = value;
-                      _currentPage = 0; // Reset to first page
+                      _currentPage = 0;
                     });
                     fetchProducts();
                   }
@@ -653,8 +761,6 @@ class _ProductstablepageState extends State<Productstablepage> {
               ),
             ],
           ),
-
-          // Pagination info and controls
           Row(
             children: [
               Text(
