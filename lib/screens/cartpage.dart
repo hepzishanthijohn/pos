@@ -356,47 +356,63 @@ for (var item in widget.cart) {
 
           // Table-like rows (UNCHANGED)
 Expanded(
-            child: ListView.builder(
-              itemCount: widget.cart.length,
-              itemBuilder: (context, index) {
-               final item = widget.cart[index];
+  child: ListView.builder(
+    itemCount: widget.cart.length,
+    itemBuilder: (context, index) {
+      final reversedIndex = widget.cart.length - 1 - index;
+      final item = widget.cart[reversedIndex];
 
-                final isSelected = index == selectedIndex;
-                return GestureDetector(
-                 onTap: () => setState(() {
-  selectedIndex = index;
-  inputBuffer = '';
-  editingField = ''; // Clear current editing mode
-}),
+      final isSelected = reversedIndex == selectedIndex;
 
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    color: isSelected ? Colors.tealAccent.withOpacity(0.2) : null,
-                    child: Row(
-                      children: [
-                        Expanded(flex: 4, child: Text(item['display_name'] ?? '',
-                        style: const TextStyle(fontSize: 17,fontWeight: FontWeight.w600,fontFamily: "Arial"))),
-                        Expanded(
-                          flex: 2,
-                          child: Text(
-                            '${item['quantity']}',
-                            maxLines: 1, // Prevent overflow for large quantities
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 14,fontWeight: FontWeight.w500,fontFamily: "Arial"),
-                          ),
-                        ),
-                        Expanded(flex: 2, child: Text('₹${item['list_price'].toStringAsFixed(2)}',
-                        style: const TextStyle(fontSize: 14,fontWeight: FontWeight.w500,fontFamily: "Arial"))),
-                        Expanded(flex: 2, child: Text('₹${(item['quantity'] * item['list_price']).toStringAsFixed(2)}',
-                        style: const TextStyle(fontSize: 14,fontWeight: FontWeight.w500,fontFamily: "Arial"))),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
+      return GestureDetector(
+        onTap: () => setState(() {
+          selectedIndex = reversedIndex;
+          inputBuffer = '';
+          editingField = '';
+        }),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          color: isSelected ? Colors.tealAccent.withOpacity(0.2) : null,
+          child: Row(
+            children: [
+              Expanded(
+                flex: 4,
+                child: Text(
+                  item['display_name'] ?? '',
+                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, fontFamily: "Arial"),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  '${item['quantity']}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, fontFamily: "Arial"),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  '₹${(item['list_price'] as num? ?? 0.0).toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, fontFamily: "Arial"),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  '₹${((item['quantity'] as num? ?? 0.0) * (item['list_price'] as num? ?? 0.0)).toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, fontFamily: "Arial"),
+                ),
+              ),
+            ],
           ),
-     // Total (UNCHANGED)
+        ),
+      );
+    },
+  ),
+) ,  // Total (UNCHANGED)
+
 LayoutBuilder(
   builder: (context, constraints) {
     bool isMobile = constraints.maxWidth < 600;

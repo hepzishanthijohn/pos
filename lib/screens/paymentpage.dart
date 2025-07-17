@@ -88,7 +88,7 @@ double paidAmountCombined = cashAmount + bankAmount + cardAmount;
 OrderSQLiteHelper().insertOrder(
   orderId: orderId,
   total: widget.totalAmount,
-  tax: 0.0, // Mapped 'gst' to 'tax'. Update this if you have actual GST value.
+  tax: 0.0, // Updated to match orders_sqlite_helper.dart parameter name
   customerName: widget.customerName ?? 'Guest',
   customerPhone: widget.customerPhone ?? '',
   paymentMethod: isCardChecked
@@ -97,13 +97,12 @@ OrderSQLiteHelper().insertOrder(
           ? 'Cash'
           : isBankChecked
               ? 'Bank'
-              : 'Unknown', // Mapped 'paymentMode' to 'paymentMethod'
-  paidAmount: paidAmountCombined, // Combined paid amounts
-  changeAmount: 0.0, // You need to calculate/provide actual change amount here if applicable
-  discount: 0.0,     // You need to calculate/provide actual discount amount here if applicable
-  // date: DateTime.now().toIso8601String(), // Optional: Add current timestamp
-
-  );
+              : 'Unknown',
+  paidAmount: cashAmount + bankAmount + cardAmount,
+  changeAmount: 0.0,
+  discount: 0.0,
+  date: DateTime.now().toIso8601String(),
+);
 
   // 🔄 Print all orders as a table
   OrderSQLiteHelper().printAllOrders();

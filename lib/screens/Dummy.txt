@@ -7,7 +7,7 @@ import 'package:excel/excel.dart';
 import 'package:file_saver/file_saver.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'dart:typed_data';       // Defines flutter's Border (for UI widgets)
+import 'dart:typed_data';      
 import 'package:excel/excel.dart' as xls;
 import 'package:excel/excel.dart' as excel_pkg;
 
@@ -115,12 +115,6 @@ void _exportCSV() async {
       order['timestamp'],
     ]),
   ];
-//   Future<void> _fetchOrders() async {
-//   final orders = await OrderSQLiteHelper().getAllOrders();
-//   setState(() {
-//     _orders = orders;
-//   });
-// }
 
 
   final csvData = const ListToCsvConverter().convert(rows);
@@ -311,58 +305,59 @@ PopupMenuButton<String>(
   padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 8),
   child: Row(
     children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 8),
-                  child: Row(
-                    children: [
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.date_range),
-                        label: Text(_startDate != null
-                            ? DateFormat('dd/MM/yyyy').format(_startDate!)
-                            : "Start Date"),
-                        onPressed: _pickStartDate,
-                      ),
-                      const SizedBox(width: 10),
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.date_range),
-                        label: Text(_endDate != null
-                            ? DateFormat('dd/MM/yyyy').format(_endDate!)
-                            : "End Date"),
-                        onPressed: _pickEndDate,
-                      ),
-                      if (_startDate != null || _endDate != null)
-                        TextButton(
-                          onPressed: () {
-                            setState(() {
-                              _startDate = null;
-                              _endDate = null;
-                              // currentPage = 0; // PaginatedDataTable manages this
-                            });
-                          },
-                          child: const Text('Clear Dates'),
-                        ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 8),
-                  child: Row(
-                    children: [
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.file_download),
-                        label: const Text("Export CSV"),
-                        onPressed: _exportCSV,
-                      ),
-                      const SizedBox(width: 10),
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.file_download),
-                        label: const Text("Export Excel"),
-                        onPressed: _exportExcel,
-                      ),
-                    ],
-                  ),
-                ),
-                ],
+Padding(
+  padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 8),
+  child: LayoutBuilder(
+    builder: (context, constraints) {
+      return Wrap(
+        spacing: 12,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          ElevatedButton.icon(
+            icon: const Icon(Icons.date_range),
+            label: Text(
+              _startDate != null
+                  ? DateFormat('dd/MM/yyyy').format(_startDate!)
+                  : "Start Date",
+            ),
+            onPressed: _pickStartDate,
+          ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.date_range),
+            label: Text(
+              _endDate != null
+                  ? DateFormat('dd/MM/yyyy').format(_endDate!)
+                  : "End Date",
+            ),
+            onPressed: _pickEndDate,
+          ),
+          if (_startDate != null || _endDate != null)
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _startDate = null;
+                  _endDate = null;
+                });
+              },
+              child: const Text('Clear Dates'),
+            ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.file_download),
+            label: const Text("Export CSV"),
+            onPressed: _exportCSV,
+          ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.file_download),
+            label: const Text("Export Excel"),
+            onPressed: _exportExcel,
+          ),
+        ],
+      );
+    },
+  ),
+),
+  ],
                 ),
                 ),
 
@@ -377,7 +372,7 @@ PopupMenuButton<String>(
                           headingRowColor: MaterialStateColor.resolveWith(
                             (states) => const Color.fromARGB(255, 8, 72, 150),
                           ),
-                          columnSpacing: 50,
+                          columnSpacing: 30,
                           // --- DataTable Sorting Properties ---
                           sortColumnIndex: _sortColumnIndex,
                           sortAscending: _sortAscending,
@@ -442,6 +437,8 @@ PopupMenuButton<String>(
                             onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
 
                             ),
+
+
                           ],
                                                  rows: _paginatedOrders.asMap().entries.map((entry) {
                             final int rowIndex = entry.key; // Index within _paginatedOrders
@@ -575,7 +572,6 @@ const TextStyle _headerStyle = TextStyle(
   fontSize: 16,
   color: Colors.white,
 ); 
-
 
 
 
