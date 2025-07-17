@@ -122,65 +122,90 @@ class __FormContentState extends State<_FormContent> {
       ..showSnackBar(snackBar);
   }
 
-  void _handleLogin() async {
-    final box = await Hive.openBox("login");
+ void _handleLogin() async {
+  final box = await Hive.openBox("login");
 
-    try {
-      const url = "${baseurl}web/session/authenticate/";
-      final payload = {
-        "params": {
-          "db": DB,
-          "login": _emailController.text.toLowerCase(),
-          "password": _passwordController.text,
-        }
+  setState(() => _isVerifying = true);
 
-      };
-
-      final response = await http.post(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(payload),
-      ).timeout(const Duration(seconds: 60));
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-
-        if (data.containsKey("result")) {
-          final session = response.headers[HttpHeaders.setCookieHeader]
-                  ?.split(';')
-                  .first ??
-              '';
-          await box.put("session_id", session);
-          await box.put("userinfo", data['result']);
-
-          if (_rememberMe) {
-            await box.put("credentials", {
-              "email": _emailController.text,
-              "password": _passwordController.text,
-              "status": _rememberMe,
-            });
-          } else {
-            await box.delete("credentials");
-          }
-
-          _showSnackBar("Login Successful!", "Welcome", ContentType.success);
-
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const POSConfigPage()),
-          );
-        } else {
-          _showSnackBar("Login Failed", "Invalid credentials", ContentType.failure);
-        }
-      } else {
-        _showSnackBar("Server Error", "Please try again later", ContentType.failure);
-      }
-    } catch (e) {
-      _showSnackBar("Error", "Cannot connect to server", ContentType.failure);
-    } finally {
-      setState(() => _isVerifying = false);
+  const url = "${baseurl}web/session/authenticate/";
+  final payload = {
+    "params": {
+      "db": DB,
+      "login": _emailController.text.toLowerCase(),
+      "password": _passwordController.text,
     }
+  };
+
+  try {
+    final response = await http.post(
+      Uri.parse(url),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(payload),
+    ).timeout(const Duration(seconds: 60));
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+
+      if (data.containsKey("result")) {
+        final session = response.headers[HttpHeaders.setCookieHeader]
+                ?.split(';')
+                .first ??
+            '';
+        await box.put("session_id", session);
+        await box.put("userinfo", data['result']);
+
+        if (_rememberMe) {
+          await box.put("credentials", {
+            "email": _emailController.text,
+            "password": _passwordController.text,
+            "status": _rememberMe,
+          });
+        } else {
+          await box.delete("credentials");
+        }
+
+        _showSnackBar("Login Successful!", "Welcome", ContentType.success);
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const POSConfigPage()),
+        );
+      } else {
+        _showSnackBar("Login Failed", "Invalid credentials", ContentType.failure);
+      }
+    } else {
+      _showSnackBar("Server Error", "Please try again later", ContentType.failure);
+    }
+  } catch (e) {
+    // 🔌 Offline fallback logic
+    final saved = box.get("credentials");
+    if (saved != null &&
+        saved["email"] == _emailController.text &&
+        saved["password"] == _passwordController.text) {
+      // Simulate userinfo with placeholder
+      await box.put("userinfo", {
+        "name": saved["email"],
+        "offline": true,
+      });
+
+      _showSnackBar(
+        "Offline Mode",
+        "You're currently logged in as an offline user",
+        ContentType.warning,
+      );
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const POSConfigPage()),
+      );
+    } else {
+      _showSnackBar("Offline Login Failed", "No saved credentials found", ContentType.failure);
+    }
+  } finally {
+    setState(() => _isVerifying = false);
   }
+}
+
 
   @override
   Widget build(BuildContext context) {

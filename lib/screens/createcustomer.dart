@@ -349,45 +349,41 @@ void _onCreatePressed() async {
                         color: Colors.black87,
                       ),
                     ),
-                    StatefulBuilder(
-                      builder: (BuildContext context, StateSetter setStateInsideDialog) {
-                        return Row(
-                          children: [
-                            Expanded(
-                              child: RadioListTile<String>(
-                                title: const Text('Person', style: TextStyle(fontFamily: 'Arial')),
-                                value: 'person',
-                                groupValue: _selectedType,
-                                onChanged: (value) {
-                                  setStateInsideDialog(() {
-                                    _selectedType = value!;
-                                    contactAddressController.clear();
-                                    street2Controller.clear();
-                                    cityController.clear();
-                                    zipController.clear();
-                                    vatController.clear();
-                                  });
-                                },
-                                activeColor: const Color.fromARGB(255, 1, 139, 82),
-                              ),
-                            ),
-                            Expanded(
-                              child: RadioListTile<String>(
-                                title: const Text('Company', style: TextStyle(fontFamily: 'Arial')),
-                                value: 'company',
-                                groupValue: _selectedType,
-                                onChanged: (value) {
-                                  setStateInsideDialog(() {
-                                    _selectedType = value!;
-                                  });
-                                },
-                                activeColor: const Color.fromARGB(255, 1, 139, 82),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
+                  Row(
+  children: [
+    Expanded(
+      child: RadioListTile<String>(
+        title: const Text('Person', style: TextStyle(fontFamily: 'Arial')),
+        value: 'person',
+        groupValue: _selectedType,
+        onChanged: (value) {
+          setState(() {
+            _selectedType = value!;
+            contactAddressController.clear();
+            street2Controller.clear();
+            cityController.clear();
+            zipController.clear();
+            vatController.clear();
+          });
+        },
+        activeColor: const Color.fromARGB(255, 1, 139, 82),
+      ),
+    ),
+    Expanded(
+      child: RadioListTile<String>(
+        title: const Text('Company', style: TextStyle(fontFamily: 'Arial')),
+        value: 'company',
+        groupValue: _selectedType,
+        onChanged: (value) {
+          setState(() {
+            _selectedType = value!;
+          });
+        },
+        activeColor: const Color.fromARGB(255, 1, 139, 82),
+      ),
+    ),
+  ],
+),
                   ],
                 ),
                 const SizedBox(height: 16),

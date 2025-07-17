@@ -1,35 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Required for FilteringTextInputFormatter
+import 'package:flutter/services.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
 import 'package:rcspos/screens/customerpage.dart';
- // Make sure Customer class is here
-import 'package:rcspos/utils/urls.dart'; // Make sure baseurl is here
-
-// Define baseurl if it's not globally accessible, or ensure `urls.dart` provides it.
-// For demonstration, assuming baseurl is from urls.dart
-// const String baseurl = 'http://your-api-url.com'; // Uncomment if baseurl is not from urls.dart
-
-// Assuming `Customer` class structure as below, update if different:
-// class Customer {
-//   final int id;
-//   final String name;
-//   final String? phone;
-//   final String? email;
-//   final String? contactAddress;
-//   final String? companyType; // Added companyType for consistency with AddCustomerDialog
-
-//   Customer({
-//     required this.id,
-//     required this.name,
-//     this.phone,
-//     this.email,
-//     this.contactAddress,
-//     this.companyType,
-//   });
-// }
+import 'package:rcspos/utils/urls.dart';
 
 
 class EditCustomerPage extends StatefulWidget {
@@ -46,14 +22,13 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
   final phoneController = TextEditingController();
   final emailController = TextEditingController();
   final contactAddressController = TextEditingController(); // Renamed for consistency
-  // Add more controllers if company-specific fields are editable here
+
   final street2Controller = TextEditingController();
   final cityController = TextEditingController();
   final zipController = TextEditingController();
   final vatController = TextEditingController();
 
-  // Keep track of the selected type if it's editable, otherwise just display
-  String _selectedType = 'person'; // Initialize with existing customer's type
+  String _selectedType = 'person'; 
 
   @override
   void initState() {
@@ -64,13 +39,6 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
     contactAddressController.text = widget.customer.contactAddress ?? '';
     _selectedType = widget.customer.companyType ?? 'person'; // Initialize selected type
 
-    // Initialize other controllers if they are part of customer object and editable
-    // For now, assuming they might not be directly in the base Customer model,
-    // but if they are, you'd populate them similarly:
-    // street2Controller.text = widget.customer.street2 ?? '';
-    // cityController.text = widget.customer.city ?? '';
-    // zipController.text = widget.customer.zip ?? '';
-    // vatController.text = widget.customer.vat ?? '';
 
     debugPrint('Editing customer with ID: ${widget.customer.id}');
   }
@@ -224,7 +192,7 @@ void _onSavePressed() async {
       title: const Text('Confirm Update', style: TextStyle(fontFamily: 'Arial', fontWeight: FontWeight.bold)),
       content: Text(
         'Are you sure you want to update "$name"?',
-        style: const TextStyle(fontFamily: 'Arial',fontSize: 15),
+        style: const TextStyle(fontFamily: 'Arial', fontSize: 15),
       ),
       actions: [
         TextButton(
@@ -264,93 +232,90 @@ void _onSavePressed() async {
   final success = await _updateCustomer(widget.customer.id, updated);
 
   if (success) {
-   
- showDialog(
-    context: context,
-    barrierDismissible: false, // User must tap OK to close
-    builder: (ctx) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 8.0, // Add some elevation for a subtle shadow effect
-      contentPadding: const EdgeInsets.fromLTRB(24.0, 20.0, 24.0, 0.0), // Adjust content padding
-      content: Column(
-        mainAxisSize: MainAxisSize.min, // Make the column take minimum space
-        children: [
-          // Icon and Title on the same line using a Row
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center, // Center the icon and title together
-            mainAxisSize: MainAxisSize.min, // Keep the row size minimal
-            children: [
-              const Icon(
-                Icons.thumb_up, // The thumbs up icon
-                color: Colors.green, // Green color for success
-                size: 36, // Adjust size to fit well beside text
-              ),
-              const SizedBox(width: 10), // Space between icon and text
-              const Text(
-                'Success!',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontFamily: 'Arial',
-                  fontWeight: FontWeight.bold,
-                  fontSize: 22, // Keep font size consistent with previous title
-                  color: Colors.black87,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16), // Space between the icon/title row and the message
-
-          // Content message
-          Text(
-            'Customer "$name" updated successfully!',
-            textAlign: TextAlign.center, // Center align message
-            style: const TextStyle(
-              fontFamily: 'Arial',
-              fontSize: 16, // Appropriate font size
-              color: Color.fromARGB(255, 38, 117, 41), // Softer text color
-              fontWeight: FontWeight.w500, // Slightly lighter weight for the message
-            ),
-          ),
-        ],
-      ),
-      // --- IMPORTANT CHANGE HERE ---
-      // Increased the top padding from 10.0 to 30.0 (you can adjust this value further)
-      actionsPadding: const EdgeInsets.fromLTRB(20.0, 30.0, 20.0, 20.0), // Increased top padding
-      actions: [
-        // OK button centered
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center, // Align children to the center of the row
+    // Show success dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false, // User must tap OK to close
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 8.0, // Add some elevation for a subtle shadow effect
+        contentPadding: const EdgeInsets.fromLTRB(24.0, 20.0, 24.0, 0.0), // Adjust content padding
+        content: Column(
+          mainAxisSize: MainAxisSize.min, // Make the column take minimum space
           children: [
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(ctx); // Close current success dialog
-                Navigator.pop(context, true); // Close the edit dialog, passing true for success
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green, // Green button for success
-                foregroundColor: Colors.white, // White text on button
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), // Padding for button
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8), // Rounded corners for the button
+            // Icon and Title on the same line using a Row
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center, // Center the icon and title together
+              mainAxisSize: MainAxisSize.min, // Keep the row size minimal
+              children: [
+                const Icon(
+                  Icons.thumb_up, // The thumbs up icon
+                  color: Colors.green, // Green color for success
+                  size: 36, // Adjust size to fit well beside text
                 ),
-                elevation: 6, // Subtle button elevation
-              ),
-              child: const Text(
-                'OK',
-                style: TextStyle(
-                  fontFamily: 'Arial',
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
+                const SizedBox(width: 10), // Space between icon and text
+                const Text(
+                  'Success!',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontFamily: 'Arial',
+                    fontWeight: FontWeight.bold,
+                    fontSize: 22, // Keep font size consistent with previous title
+                    color: Colors.black87,
+                  ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 16), // Space between the icon/title row and the message
+
+            // Content message
+            Text(
+              'Customer "$name" updated successfully!',
+              textAlign: TextAlign.center, // Center align message
+              style: const TextStyle(
+                fontFamily: 'Arial',
+                fontSize: 16, 
+                color: Color.fromARGB(255, 38, 117, 41),
+                fontWeight: FontWeight.w500, 
               ),
             ),
           ],
         ),
-      ],
-    ),
-  ); 
-   } else {
-    // If update failed, show an error dialog
+        actionsPadding: const EdgeInsets.fromLTRB(20.0, 30.0, 20.0, 20.0), 
+        actions: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center, 
+            children: [
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Navigator.pop(context, true); // Go back to the previous screen
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green, 
+                  foregroundColor: Colors.white, 
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), 
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8), 
+                  ),
+                  elevation: 6, 
+                ),
+                child: const Text(
+                  'OK',
+                  style: TextStyle(
+                    fontFamily: 'Arial',
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  } else {
+    // Show failure dialog
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(

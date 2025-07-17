@@ -12,17 +12,18 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  if (kIsWeb) {
-    await Hive.initFlutter(); // ✅ Web safe
-  } else {
-    Directory dir = await getApplicationDocumentsDirectory();
-    Hive.init(dir.path); // ✅ Native platforms only
+  // Platform-specific Hive initialization
+  if (!kIsWeb) { // For mobile and desktop
+    final appDocDir = await getApplicationDocumentsDirectory();
+    Hive.init(appDocDir.path);
+  } else { // For web
+    await Hive.initFlutter(); // Use hive_flutter for web
   }
 
   await Hive.openBox('login');
-
   runApp(const MyApp());
 }
+
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -40,7 +41,11 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
-      ),
+        // Set the default font family for the entire app
+        fontFamily: 'Arial', // <-- This line sets Arial as the default font
+
+        // Define a comprehensive TextTheme
+     ),
       home: FutureBuilder<bool>(
         future: isOnline(),
         builder: (context, snapshot) {
@@ -51,7 +56,6 @@ class MyApp extends StatelessWidget {
           }
 
           final online = snapshot.data!;
-          // Always show login first
           return online ? const Login() : const OfflineNotice();
         },
       ),

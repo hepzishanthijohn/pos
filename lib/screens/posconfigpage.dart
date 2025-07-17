@@ -6,7 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
 import 'package:rcspos/screens/home.dart'; // Make sure this path is correct
+import 'package:rcspos/screens/loginpage.dart';
+import 'package:rcspos/localdb/sqlite_helper.dart';
 import 'package:rcspos/utils/urls.dart'; // Make sure baseurl is correctly defined here
+import 'package:awesome_snackbar_content/awesome_snackbar_content.dart';
+
 
 class POSConfigPage extends StatefulWidget {
   const POSConfigPage({super.key});
@@ -42,50 +46,115 @@ class _POSConfigPageState extends State<POSConfigPage> {
     return 'N/A';
   }
 
-  // --- API Call to Fetch POS Configurations ---
-  Future<void> fetchPOSConfigs() async {
-    setState(() {
-      _loading = true;
-      _errorMessage = null; // Clear previous errors
-    });
+  
+Future<List<Map<String, dynamic>>?> _loadPOSConfigsOffline() async {
+  final sqlite = SQLiteHelper();
+  final configs = sqlite.fetchConfigs();
+  return configs;
+}
 
-    try {
-      final box = await Hive.openBox('login');
-      final rawSession = box.get('session_id');
-      if (rawSession == null) {
-        showError('Session ID not found. Please login again.');
-        return;
-      }
-      final sessionId = rawSession.contains('session_id=') ? rawSession : 'session_id=$rawSession';
-
-      final response = await http.get(
-        Uri.parse(apiUrl),
-        headers: {
-          HttpHeaders.cookieHeader: sessionId,
-          HttpHeaders.contentTypeHeader: 'application/json',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final List configsRaw = data['result'];
-
-        setState(() {
-          _configs = configsRaw.map((e) => Map<String, dynamic>.from(e)).toList();
-          _loading = false;
-        });
-      } else {
-        // More specific error message from Odoo if available
-        final errorDetail = jsonDecode(response.body)['error']['data']['message'] ?? response.body;
-        showError('Failed to fetch POS configs: ${response.statusCode} - $errorDetail');
-      }
-    } on SocketException {
-      showError('Network error. Please check your internet connection.');
-    } catch (e) {
-      showError('An unexpected error occurred: $e');
-      debugPrint('Error fetching POS configs: $e'); // For detailed debugging
-    }
+  void _showSnackBar(String title, String message, ContentType type) {
+    final snackBar = SnackBar(
+      elevation: 0,
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: Colors.transparent,
+      content: AwesomeSnackbarContent(
+        title: title,
+        message: message,
+        contentType: type,
+      ),
+    );
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(snackBar);
   }
+
+  // --- API Call to Fetch POS Configurations ---
+Future<void> fetchPOSConfigs() async {
+  setState(() {
+    _loading = true;
+    _errorMessage = null;
+  });
+
+  final box = await Hive.openBox('login');
+
+  try {
+    final rawSession = box.get('session_id');
+    if (rawSession == null) {
+      showError('Session ID not found. Please login again.');
+      return;
+    }
+
+    final sessionId = rawSession.contains('session_id=') ? rawSession : 'session_id=$rawSession';
+
+    final response = await http.get(
+      Uri.parse(apiUrl),
+      headers: {
+        HttpHeaders.cookieHeader: sessionId,
+        HttpHeaders.contentTypeHeader: 'application/json',
+      },
+    );
+
+ if (response.statusCode == 200) {
+  final data = jsonDecode(response.body);
+  final List configsRaw = data['result'] ?? [];
+
+  final List<Map<String, dynamic>> parsedConfigs =
+      configsRaw.map((e) => Map<String, dynamic>.from(e)).toList();
+
+  final sqlite = SQLiteHelper();
+  await sqlite.init();
+  await sqlite.insertConfigs(parsedConfigs);
+
+  // ✅ Debug print here for sqlite pos_configs contents
+  // sqlite.debugPrintAllConfigs();
+
+  sqlite.close();
+
+  setState(() {
+    _configs = parsedConfigs;
+  });
+
+  // _showSnackBar("POS Config Loaded", "Fetched from server", ContentType.success);
+}
+ else {
+      final error = jsonDecode(response.body);
+      final msg = error['error']['data']['message'] ?? response.body;
+      showError("Failed to fetch POS configs: ${response.statusCode} - $msg");
+    }
+  } catch (e, stackTrace) {
+    print("Fetch error: $e\n$stackTrace");
+
+    final sqlite = SQLiteHelper();
+    await sqlite.init();
+    final offlineData = sqlite.fetchConfigs();
+    sqlite.close();
+
+    if (offlineData.isNotEmpty) {
+      setState(() {
+        _configs = offlineData;
+      });
+
+      _showSnackBar(
+        "Offline Mode",
+        "You're currently viewing offline POS data",
+        ContentType.warning,
+      );
+    } else {
+      setState(() {
+        _configs = [];
+      });
+
+      _showSnackBar(
+        "Offline Fetch Failed",
+        "No offline POS configs available",
+        ContentType.failure,
+      );
+    }
+  } finally {
+    setState(() => _loading = false);
+  }
+}
 
   // --- Error Message Handler ---
   void showError(String message) {
@@ -114,13 +183,32 @@ class _POSConfigPageState extends State<POSConfigPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Point Of Sale',
-            style: TextStyle(fontFamily: 'Arial', color: Colors.white, fontWeight: FontWeight.bold)),
-        backgroundColor: const Color.fromARGB(255, 1, 139, 82),
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
-      backgroundColor: const Color(0xFFF7F4FB),
+appBar: AppBar(
+  title: const Text(
+    'Point Of Sale',
+    style: TextStyle(
+      fontFamily: 'Arial',
+      color: Colors.white,
+      fontWeight: FontWeight.bold,
+    ),
+  ),
+  backgroundColor: const Color.fromARGB(255, 1, 139, 82),
+  iconTheme: const IconThemeData(color: Colors.white),
+  actions: [
+    IconButton(
+      icon: const Icon(Icons.exit_to_app),
+      tooltip: 'Logout',
+      onPressed: () {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => const Login()),
+          (route) => false,
+        );
+      },
+    ),
+  ],
+),
+     backgroundColor: const Color(0xFFF7F4FB),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _errorMessage != null // Show error widget if there's an error

@@ -4,7 +4,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
+import 'package:rcspos/localdb/CategorySQLiteHelper.dart';
 import 'package:rcspos/screens/home.dart';
+import 'package:rcspos/screens/loginpage.dart';
 import 'package:rcspos/screens/productpage.dart';
 import 'package:rcspos/utils/urls.dart';
 
@@ -26,9 +28,12 @@ class _AppDrawerState extends State<AppDrawer> {
     fetchCategories();
   }
 
- Future<void> fetchCategories() async {
+Future<void> fetchCategories() async {
   final box = await Hive.openBox('login');
   final rawSession = box.get('session_id');
+
+  final catghelper = CategorySQLiteHelper();
+  await catghelper.init();
 
   if (rawSession == null) {
     setState(() => _loading = false);
@@ -46,7 +51,7 @@ class _AppDrawerState extends State<AppDrawer> {
     final response = await http.get(
       Uri.parse(url),
       headers: {
-        HttpHeaders.cookieHeader: sessionId, // ✅ Session sent as cookie
+        HttpHeaders.cookieHeader: sessionId,
         HttpHeaders.contentTypeHeader: 'application/json',
       },
     );
@@ -54,8 +59,13 @@ class _AppDrawerState extends State<AppDrawer> {
     if (response.statusCode == 200) {
       final json = jsonDecode(response.body);
       if (json['result'] is List) {
+        final List<Map<String, dynamic>> result =
+            List<Map<String, dynamic>>.from(json['result']);
+
+        await catghelper.insertCategories(result); // ✅ Save to SQLite
+        // catghelper.debugPrintAllCategories(); // Debug print
         setState(() {
-          categories = List<Map<String, dynamic>>.from(json['result']);
+          categories = result;
           _loading = false;
         });
       } else {
@@ -66,11 +76,28 @@ class _AppDrawerState extends State<AppDrawer> {
       setState(() => _loading = false);
       debugPrint('Failed to fetch categories (${response.statusCode})');
     }
+  } on SocketException {
+    // 🔌 Offline fallback
+    final localCategories = catghelper.fetchCategories();
+    if (localCategories.isNotEmpty) {
+      setState(() {
+        categories = localCategories;
+        _loading = false;
+      });
+      debugPrint('Offline mode: Categories loaded from local DB');
+    } else {
+      setState(() => _loading = false);
+      debugPrint('No categories in local DB');
+    }
   } catch (e) {
     setState(() => _loading = false);
     debugPrint('Error: $e');
+  } finally {
+    catghelper.close();
   }
 }
+
+
 Widget buildCategoryIcon(dynamic imageValue) {
   if (imageValue is! String || imageValue == 'false') {
     return const Icon(Icons.category);
@@ -148,6 +175,20 @@ Widget buildCategoryIcon(dynamic imageValue) {
       },
     );
   }).toList(),
+    const Divider(),
+    
+    // ✅ Logout Option
+    ListTile(
+      leading: const Icon(Icons.exit_to_app, color: Colors.redAccent),
+      title: const Text('Logout', style: TextStyle(color: Colors.redAccent)),
+      onTap: () {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => const Login()),
+          (route) => false,
+        );
+      },
+    ),
 
               ],
             ),

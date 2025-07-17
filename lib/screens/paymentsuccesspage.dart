@@ -1,9 +1,69 @@
-
 import 'package:flutter/material.dart';
+import 'package:rcspos/localdb/orders_sqlite_helper.dart';
 import 'package:rcspos/screens/invoicepage.dart';
 
-class PaymentSuccessPage extends StatelessWidget {
-  const PaymentSuccessPage({super.key});
+class PaymentSuccessPage extends StatefulWidget {
+  final String orderId;
+  final double total;
+  final double gst; // Corresponds to 'tax' in DB
+  final String customerName;
+  final String customerPhone;
+  final String paymentMode; // Corresponds to 'payment_method' in DB
+  final double paidCash;
+  final double paidBank;
+  final double paidCard;
+
+
+  const PaymentSuccessPage({
+    super.key,
+    required this.orderId,
+    required this.total,
+    required this.gst,
+    required this.customerName,
+    required this.customerPhone,
+    required this.paymentMode,
+    required this.paidCash,
+    required this.paidBank,
+    required this.paidCard,
+    // this.changeAmount,
+    // this.discount,
+  });
+
+  @override
+  State<PaymentSuccessPage> createState() => _PaymentSuccessPageState();
+}
+
+class _PaymentSuccessPageState extends State<PaymentSuccessPage> {
+  bool _stored = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _storeOrder();
+  }
+
+  void _storeOrder() async {
+    if (_stored) return;
+    _stored = true;
+
+    // Calculate total paid amount from different modes
+    final double totalPaidAmount = widget.paidCash + widget.paidBank + widget.paidCard;
+
+    OrderSQLiteHelper().insertOrder(
+      orderId: widget.orderId,
+      total: widget.total,
+      tax: widget.gst, // Mapped gst to tax
+      customerName: widget.customerName,
+      customerPhone: widget.customerPhone,
+      paymentMethod: widget.paymentMode, // Mapped paymentMode to paymentMethod
+      paidAmount: totalPaidAmount, // Calculated total paid amount
+      changeAmount: 0.0, // Assuming 0.0 if not passed or calculated here
+      discount: 0.0,     // Assuming 0.0 if not passed or calculated here
+      // You can add a 'date' parameter here if you want to store the exact payment time
+      // date: DateTime.now().toIso8601String(),
+    );
+    debugPrint('Order stored successfully: ${widget.orderId}');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -11,8 +71,7 @@ class PaymentSuccessPage extends StatelessWidget {
       backgroundColor: Colors.white,
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        backgroundColor: const Color.fromARGB(255, 1, 139, 82)
-,
+        backgroundColor: const Color.fromARGB(255, 1, 139, 82),
         title: const Text("Payment Successful", style: TextStyle(color: Colors.white)),
         centerTitle: true,
       ),
@@ -29,14 +88,15 @@ class PaymentSuccessPage extends StatelessWidget {
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
-              const Text(
-                "Thank you, Marc Demo!\nYour payment was successful.",
+              Text(
+                "Thank you, ${widget.customerName}!\nYour payment was successful.",
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 16, color: Colors.grey),
+                style: const TextStyle(fontSize: 16, color: Colors.grey),
               ),
               const SizedBox(height: 40),
               ElevatedButton.icon(
                 onPressed: () {
+                  // This pops all routes until the first one (likely the home screen)
                   Navigator.of(context).popUntil((route) => route.isFirst);
                 },
                 icon: const Icon(Icons.add_shopping_cart),
@@ -49,14 +109,13 @@ class PaymentSuccessPage extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               OutlinedButton.icon(
-               onPressed: () {
-  Navigator.of(context).push(
-    MaterialPageRoute(
-      builder: (context) => const InvoicePage(), // make sure this page exists
-    ),
-  );
-},
-
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => const InvoicePage(),
+                    ),
+                  );
+                },
                 icon: const Icon(Icons.receipt_long),
                 label: const Text("View Invoice"),
                 style: OutlinedButton.styleFrom(

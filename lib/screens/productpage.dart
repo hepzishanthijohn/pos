@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
+import 'package:rcspos/localdb/product_sqlite_helper.dart';
 import 'package:rcspos/utils/urls.dart';
 
 class ProductPage extends StatefulWidget {
@@ -44,94 +45,82 @@ class _ProductPageState extends State<ProductPage> {
 
   Future<void> _initializeData() async {
     setState(() => _loading = true);
-    await fetchGstofProducts();
+  
     await fetchProducts();
     setState(() => _loading = false);
   }
 
-  Future<void> fetchGstofProducts() async {
-    final box = await Hive.openBox('login');
-    final rawSession = box.get('session_id');
-    if (rawSession == null) {
-      showError('Session ID not found. Please login again.');
-      return;
-    }
+Future<void> fetchProducts() async {
+  final box = await Hive.openBox('login');
+  final rawSession = box.get('session_id');
 
-    final sessionId = rawSession.contains('session_id=')
-        ? rawSession
-        : 'session_id=$rawSession';
-
-    final apiUrl = '$baseurl/api/account.tax';
-    try {
-      final response = await http.get(
-        Uri.parse(apiUrl),
-        headers: {
-          HttpHeaders.cookieHeader: sessionId,
-          HttpHeaders.contentTypeHeader: 'application/json',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        if (json['result'] is List) {
-          final gstList = List<Map<String, dynamic>>.from(json['result']);
-
-          setState(() {
-            taxes = gstList; // ✅ Store in correct variable
-          });
-        } else {
-          showError('Invalid response format');
-        }
-      } else {
-        showError('Failed to load GST data (${response.statusCode})');
-      }
-    } catch (e) {
-      showError('Error fetching GST: $e');
-    }
+  if (rawSession == null) {
+    showError('Session ID not found. Please login again.');
+    return;
   }
 
-  Future<void> fetchProducts() async {
-    final box = await Hive.openBox('login');
-    final rawSession = box.get('session_id');
-    if (rawSession == null) {
-      showError('Session ID not found. Please login again.');
-      return;
-    }
+  final sessionId = rawSession.contains('session_id=')
+      ? rawSession
+      : 'session_id=$rawSession';
 
-    final sessionId = rawSession.contains('session_id=')
-        ? rawSession
-        : 'session_id=$rawSession';
+  final isCategory = widget.categoryId != null;
+  final apiUrl = isCategory
+      ? '${baseurl}api/product.template?query={id,display_name,list_price,qty_available,uom_id}&filter=[["pos_categ_ids","=",${widget.categoryId}]]'
+      : '${baseurl}api/product.template?query={id,display_name,taxes_id{id,name},default_code,categ_id{id,name},list_price,qty_available}';
 
-    final apiUrl = widget.categoryId != null
-        ? '${baseurl}api/product.template?query={id,display_name,image_128,list_price,qty_available,uom_id}&filter=[["pos_categ_ids","=",${widget.categoryId}]]'
-        : '${baseurl}api/product.template?query={id,display_name,image_128,taxes_id{id,name},default_code,categ_id{id,name},list_price,qty_available}';
+  try {
+    final response = await http.get(
+      Uri.parse(apiUrl),
+      headers: {
+        HttpHeaders.cookieHeader: sessionId,
+        HttpHeaders.contentTypeHeader: 'application/json',
+      },
+    );
 
-    try {
-      final response = await http.get(
-        Uri.parse(apiUrl),
-        headers: {
-          HttpHeaders.cookieHeader: sessionId,
-          HttpHeaders.contentTypeHeader: 'application/json',
-        },
-      );
+    if (response.statusCode == 200) {
+      final json = jsonDecode(response.body);
 
-      if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        if (json['result'] is List) {
-          setState(() {
-            products = List<Map<String, dynamic>>.from(json['result']);
-            _loading = false;
-          });
-        } else {
-          showError('Invalid response format');
-        }
+      if (json['result'] is List) {
+        final List<Map<String, dynamic>> data =
+            List<Map<String, dynamic>>.from(json['result']);
+
+        /// ✅ Save to SQLite for offline use
+        final productDb = ProductSQLiteHelper();
+        await productDb.init();
+        await productDb.insertProducts(data); // Insert to SQLite
+        final stored = productDb.fetchProducts(); // Read back
+        
+        // productDb.debugPrintAllProducts();
+        productDb.close();
+
+        setState(() {
+          products = stored;
+          _loading = false;
+        });
       } else {
-        showError('Failed to load products (${response.statusCode})');
+        showError('Invalid response format');
       }
-    } catch (e) {
+    } else {
+      showError('Failed to load products (${response.statusCode})');
+    }
+  } catch (e) {
+    // 🔌 Offline fallback: read from SQLite
+    final productDb = ProductSQLiteHelper();
+    await productDb.init();
+    final fallback = productDb.fetchProducts();
+    productDb.close();
+
+    if (fallback.isNotEmpty) {
+      setState(() {
+        products = fallback;
+        _loading = false;
+      });
+      showError('Offline data loaded. No internet.');
+    } else {
       showError('Error fetching products: $e');
     }
   }
+}
 
   void showError(String message) {
     setState(() => _loading = false);
@@ -164,7 +153,23 @@ class _ProductPageState extends State<ProductPage> {
     // 🔍 Apply search filtering here
     final List<Map<String, dynamic>> filteredProducts = products.where((product) {
       final name = product['display_name']?.toLowerCase() ?? '';
-      final matchesSearch = name.contains(widget.searchQuery.toLowerCase());
+      final code = product['default_code'] is String
+    ? product['default_code']!.toLowerCase()
+    : product['default_code'] is bool
+        ? product['default_code'].toString().toLowerCase()
+        : ''; // Default to an empty string if neither
+
+final searchQuery = widget.searchQuery is String
+    ? widget.searchQuery!.toLowerCase()
+    : widget.searchQuery is bool
+        ? widget.searchQuery.toString().toLowerCase()
+        : ''; // Default to empty string if neither
+
+final matchesSearch = name.contains(searchQuery) || code.contains(searchQuery);
+
+
+  
+  
       final stock = product['qty_available']?.toInt() ?? 0;
 
       if (widget.showOnlyInStock == true) {
@@ -176,7 +181,7 @@ class _ProductPageState extends State<ProductPage> {
       }
     }).toList();
 
-    return LayoutBuilder(
+ return LayoutBuilder(
       builder: (context, constraints) {
         return GridView.builder(
           padding: const EdgeInsets.all(8),
@@ -189,8 +194,8 @@ class _ProductPageState extends State<ProductPage> {
                     : constraints.maxWidth < 1000
                         ? 3
                         : 4,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
+            crossAxisSpacing: 0,
+            mainAxisSpacing: 0,
             childAspectRatio: constraints.maxWidth < 600 ? 0.65 : 0.75,
           ),
           itemBuilder: (context, index) {
@@ -213,6 +218,25 @@ class _ProductPageState extends State<ProductPage> {
             final stock = product['qty_available']?.toInt() ?? 0;
             final productId = product['id'];
             final alreadyInCart = widget.addedProductIds.contains(productId);
+             final category = product['categ_id'] is Map && product['categ_id']['name'] != null
+    ? product['categ_id']['name'] as String // Explicitly cast to String
+    : 'No Category';
+
+final taxListRaw = (product['taxes_id'] is List)
+    ? (product['taxes_id'] as List)
+        .map((tax) {
+          // Check if 'tax' element is a Map and has a 'name' key
+          if (tax is Map && tax['name'] != null) {
+            return tax['name'] as String; // Explicitly cast to String
+          } else if (tax is int) { // Handle cases where tax might just be an ID (though your API sends map)
+            return 'Tax ID: $tax'; // Or fetch its name if needed
+          }
+          return 'N/A Tax Item'; // Default for other unexpected types
+        })
+        .where((name) => name != 'N/A Tax Item' && !name.startsWith('Tax ID: ')) // Filter out internal placeholders
+        .join(', '):"s";
+
+final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
 
             String unit = '';
             if (product['uom_id'] is List && product['uom_id'].length > 1) {
@@ -222,14 +246,16 @@ class _ProductPageState extends State<ProductPage> {
             return InkWell( // Wrap the Card with InkWell
               onTap: stock > 0 && !alreadyInCart
                   ? () {
+                      print('Selected product:');
+                      print(product);
                       widget.onAddToCart({...product, 'quantity': 1});
                       setState(() {
                         cartQuantities[productId] = 1;
                         widget.addedProductIds.add(productId);
                       });
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('${product['display_name']} added to cart')),
-                      );
+                      // ScaffoldMessenger.of(context).showSnackBar(
+                      //   SnackBar(content: Text('${product['display_name']} added to cart')),
+                      // );
                     }
                   : alreadyInCart
                       ? () {
@@ -248,32 +274,42 @@ class _ProductPageState extends State<ProductPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: Container(
-                          height: 60,
-                          width: double.infinity,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(6),
-                            color: Colors.grey.shade100,
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(5),
+                      // Expanded(
+                      //   child: Container(
+                      //     height: 60,
+                      //     width: double.infinity,
+                      //     decoration: BoxDecoration(
+                      //       borderRadius: BorderRadius.circular(6),
+                      //       color: Colors.grey.shade100,
+                      //     ),
+                      //     child: ClipRRect(
+                      //       borderRadius: BorderRadius.circular(5),
                             
-                            child: buildProductImage(product['image_128']),
-                          ),
-                        ),
-                      ),
+                      //       child: buildProductImage(product['image_128']),
+                      //     ),
+                      //   ),
+                      // ),
                       const SizedBox(height: 1),
                       Text(
                         product['display_name'] ?? 'Unnamed',
                         style: const TextStyle(
                           fontWeight: FontWeight.w600,
-                          fontSize: 13.5,
+                          fontSize: 17,
                           fontFamily: 'Arial',
                         ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
+                       const SizedBox(height: 2),
+                     Text(
+  '${product['default_code'] is bool ? (product['default_code']! ? 'Available' : 'Not Available') : (product['default_code'] ?? 'N/A')}',
+  style: const TextStyle(
+    fontSize: 13,
+    fontWeight: FontWeight.w400,
+    fontFamily: 'Arial',
+  ),
+),
+
                       const SizedBox(height: 2),
                       Text(
                         '₹${price.toStringAsFixed(2)}$unit',
@@ -284,8 +320,19 @@ class _ProductPageState extends State<ProductPage> {
                         ),
                       ),
                       const SizedBox(height: 2),
+                       Text(
+                        "$category",
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13.5,
+                          fontFamily: 'Arial',
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                       const SizedBox(height: 2),
                       Text(
-                        'GST: ${gstRate.toStringAsFixed(0)}%',
+                        'GST:$taxList',
                         style: const TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w400,
@@ -309,7 +356,7 @@ class _ProductPageState extends State<ProductPage> {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 2),
+                   
                       // Conditional display of quantity controls or simple text
                       alreadyInCart
                           ? Row(
@@ -338,7 +385,7 @@ class _ProductPageState extends State<ProductPage> {
                                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                                 ),
                                 IconButton(
-                                  icon: const Icon(Icons.add, size: 20),
+                                  icon: const Icon(Icons.add, size: 18),
                                   onPressed: (cartQuantities[productId] ?? 1) < stock
                                       ? () {
                                           final currentQty = cartQuantities[productId] ?? 1;
@@ -361,5 +408,7 @@ class _ProductPageState extends State<ProductPage> {
         );
       },
     );
+  
+
   }
 }

@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
+import 'package:rcspos/localdb/orders_sqlite_helper.dart';
 import 'package:rcspos/screens/RazorpayPaymentPage.dart';
 import 'package:rcspos/screens/payment_option_tile.dart';
 import 'package:rcspos/screens/paymentsuccesspage.dart';
@@ -77,11 +78,60 @@ void _handleManualPaymentSuccess() async {
   _handlePayment(); // show success screen
 }
 
-  void _handlePayment() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (context) => const PaymentSuccessPage()),
-    );
-  }
+void _handlePayment() {
+  final orderId = DateTime.now().millisecondsSinceEpoch.toString();
+
+  // Save order to SQLite
+ // Calculate the total paid amount from all sources
+double paidAmountCombined = cashAmount + bankAmount + cardAmount;
+
+OrderSQLiteHelper().insertOrder(
+  orderId: orderId,
+  total: widget.totalAmount,
+  tax: 0.0, // Mapped 'gst' to 'tax'. Update this if you have actual GST value.
+  customerName: widget.customerName ?? 'Guest',
+  customerPhone: widget.customerPhone ?? '',
+  paymentMethod: isCardChecked
+      ? 'Card'
+      : isCashChecked
+          ? 'Cash'
+          : isBankChecked
+              ? 'Bank'
+              : 'Unknown', // Mapped 'paymentMode' to 'paymentMethod'
+  paidAmount: paidAmountCombined, // Combined paid amounts
+  changeAmount: 0.0, // You need to calculate/provide actual change amount here if applicable
+  discount: 0.0,     // You need to calculate/provide actual discount amount here if applicable
+  // date: DateTime.now().toIso8601String(), // Optional: Add current timestamp
+
+  );
+
+  // 🔄 Print all orders as a table
+  OrderSQLiteHelper().printAllOrders();
+
+  // Navigate to success page
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (context) => PaymentSuccessPage(
+        orderId: orderId,
+        total: widget.totalAmount,
+        gst: 0.0,
+        customerName: widget.customerName ?? 'Guest',
+        customerPhone: widget.customerPhone ?? '',
+        paymentMode: isCardChecked
+            ? 'Card'
+            : isCashChecked
+                ? 'Cash'
+                : isBankChecked
+                    ? 'Bank'
+                    : 'Unknown',
+        paidCash: cashAmount,
+        paidBank: bankAmount,
+        paidCard: cardAmount,
+      ),
+    ),
+  );
+}
+
 void storeSuccessfulOrder({
   required String razorpayPaymentId,
   required double totalAmount,
@@ -96,6 +146,7 @@ void storeSuccessfulOrder({
     'timestamp': DateTime.now().toIso8601String(),
   };
 
+ 
   final box = await Hive.openBox('orders');
   await box.add(orderData);
 }

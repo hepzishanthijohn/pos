@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
+import 'package:rcspos/localdb/customersqlitehelper.dart';
 import 'package:rcspos/screens/createcustomer.dart';
 import 'package:rcspos/screens/editcustomer.dart';
 import 'package:rcspos/screens/home.dart';
@@ -48,7 +49,7 @@ class CustomerPage extends StatefulWidget {
 
 class _CustomerPageState extends State<CustomerPage> {
   List<Customer> customers = [];
-  
+  int? _selectedCustomerId;
   int rowsPerPage = 10;
   int currentPage = 0;
   int? _sortColumnIndex;
@@ -94,62 +95,92 @@ final ScrollController _scrollController = ScrollController();
     super.dispose();
   }
 
-  Future<void> fetchCustomers() async {
-    setState(() {
-      isLoading = true;
-      _selectedCustomerIds.clear(); // Clear selections when data is re-fetched
+final Customersqlitehelper customerDbHelper = Customersqlitehelper();
+
+Future<void> fetchCustomers() async {
+  setState(() {
+    isLoading = true;
+    _selectedCustomerIds.clear();
+  });
+
+  final box = await Hive.openBox('login');
+  final rawSession = box.get('session_id');
+
+  if (rawSession == null) {
+    setState(() => isLoading = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Session not found. Please log in again.', style: TextStyle(fontFamily: 'Arial')),
+      ),
+    );
+    return;
+  }
+
+  await customerDbHelper.init(); // ✅ Ensure SQLite is ready
+
+  final sessionId = rawSession.contains('session_id=') ? rawSession : 'session_id=$rawSession';
+  final url = Uri.parse('$baseurl/api/res.partner?query={id,name,email,phone,contact_address,company_type}&filter=[["customer_rank",">=",0]]');
+
+  try {
+    final response = await http.get(url, headers: {
+      HttpHeaders.cookieHeader: sessionId,
+      HttpHeaders.contentTypeHeader: 'application/json',
     });
 
-    final box = await Hive.openBox('login');
-    final rawSession = box.get('session_id');
+    if (response.statusCode == 200) {
+      final result = json.decode(response.body)['result'];
+      final List<Map<String, dynamic>> rawList = List<Map<String, dynamic>>.from(result);
 
-    if (rawSession == null) {
-      setState(() => isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Session not found. Please log in again.', style: TextStyle(fontFamily: 'Arial'))),
-      );
-      return;
-    }
+      // ✅ Save to SQLite
+      await customerDbHelper.insertCustomers(rawList);
 
-    final sessionId = rawSession.contains('session_id=') ? rawSession : 'session_id=$rawSession';
-
-    final url = Uri.parse(
-        '$baseurl/api/res.partner?query={id,name,email,phone,contact_address,company_type}&filter=[["customer_rank",">=",0]]');
-
-    try {
-      final response = await http.get(url, headers: {
-        HttpHeaders.cookieHeader: sessionId,
-        HttpHeaders.contentTypeHeader: 'application/json',
+      setState(() {
+        customers = rawList.map((e) => Customer.fromJson(e)).toList();
+        currentPage = 0;
+        _sortColumnIndex = null;
+        _sortAscending = true;
       });
 
-      if (response.statusCode == 200) {
-        final result = json.decode(response.body)['result'];
-        setState(() {
-          customers = List<Customer>.from(result.map((e) => Customer.fromJson(e)));
-          currentPage = 0; // Reset pagination when data changes
-          _sortColumnIndex = null; // Reset sort state
-          _sortAscending = true; // Reset sort state
-        });
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load customers: ${response.body}', style: const TextStyle(fontFamily: 'Arial')),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      debugPrint("Error fetching customers: $e");
+     customerDbHelper.debugPrintAllCustomers();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to load customers: ${response.body}', style: const TextStyle(fontFamily: 'Arial')),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  } catch (e) {
+    debugPrint("Network error while fetching customers: $e");
+
+    // 🔌 Offline fallback from SQLite
+    final fallback = customerDbHelper.fetchCustomers();
+    if (fallback.isNotEmpty) {
+      setState(() {
+        customers = fallback.map((e) => Customer.fromJson(e)).toList();
+        currentPage = 0;
+        _sortColumnIndex = null;
+        _sortAscending = true;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Loaded customers from local SQLite cache.', style: TextStyle(fontFamily: 'Arial')),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Network error: $e', style: const TextStyle(fontFamily: 'Arial')),
           backgroundColor: Colors.red,
         ),
       );
-    } finally {
-      setState(() => isLoading = false);
     }
+  } finally {
+    setState(() => isLoading = false);
   }
+}
 
   void _sort(int columnIndex, bool ascending) {
     setState(() {
@@ -604,90 +635,79 @@ static const double minColumnWidth = 80.0;
                           ),
                         )
                       : Scrollbar(
-                          controller: _scrollController, // Vertical scrollbar
-                          thumbVisibility: true,
-                          child: ListView.builder(
-                            controller: _scrollController, // Vertical scroll controller
-                            itemCount: visibleCustomers.length,
-                            itemBuilder: (context, index) {
-                              final customer = visibleCustomers[index];
-                              final isSelected = _selectedCustomerIds.contains(customer.id);
-                              return Container(
-                                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-                                decoration: BoxDecoration(
-                                  color: isSelected
-                                      ? Colors.blue.withAlpha((0.1 * 255).toInt())
-                                      : index % 2 == 0
-                                          ? Colors.white
-                                          : Colors.grey.shade50,
-                                  border: Border(
-                                    bottom: BorderSide(color: Colors.grey.shade300),
-                                  ),
-                                ),
-                                // Each row now has its own horizontal scroll view,
-                                // synchronized with the header's scroll.
-                                child: SingleChildScrollView(
-                                  scrollDirection: Axis.horizontal,
-                                  controller: _horizontalListScrollController, // Synchronized controller
-                                  child: Row(
-                                    children: [
-                                      SizedBox(
-                                        width: checkBoxWidth, // Use defined constant width
-                                        child: Checkbox(
-                                          value: isSelected,
-                                          onChanged: (bool? newValue) {
-                                            setState(() {
-                                              if (newValue == true) {
-                                                _selectedCustomerIds.add(customer.id);
-                                              } else {
-                                                _selectedCustomerIds.remove(customer.id);
-                                              }
-                                            });
-                                          },
-                                          activeColor: const Color.fromARGB(255, 1, 129, 91),
-                                        ),
-                                      ),
-                                      _buildCell('${startIndex + index + 1}', width: snoWidth),
-                                      _buildCell(customer.name, width: nameWidth),
-                                      _buildCell(customer.email ?? '-', width: emailWidth),
-                                      _buildCell(customer.phone ?? '-', width: phoneWidth),
-                                      _buildCell(customer.contactAddress.replaceAll('\n', ', '), width: addressWidth),
-                                      _buildCompanyTypeCell(customer.companyType, width: companyTypeWidth),
-                                      SizedBox( // Fixed width for actions column
-                                        width: actionsWidth,
-                                        child: Row(
-                                          mainAxisAlignment: MainAxisAlignment.center,
-                                          children: [
-                                            IconButton(
-                                              icon: const Icon(Icons.edit, color: Colors.blue),
-                                              tooltip: 'Edit Customer',
-                                              onPressed: () async {
-                                                final result = await showDialog(
-                                                  context: context,
-                                                  builder: (ctx) => EditCustomerPage(customer: customer),
-                                                );
-                                                if (result == true) {
-                                                  fetchCustomers();
-                                                }
-                                              },
-                                            ),
-                                            IconButton(
-                                              icon: const Icon(Icons.delete, size: 20, color: Colors.red),
-                                              tooltip: 'Delete Customer',
-                                              onPressed: () {
-                                                _confirmDeleteCustomer(customer);
-                                              },
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
+  controller: _scrollController,
+  thumbVisibility: true,
+  child: ListView.builder(
+    controller: _scrollController,
+    itemCount: visibleCustomers.length,
+    itemBuilder: (context, index) {
+      final customer = visibleCustomers[index];
+      final isSelected = _selectedCustomerId == customer.id; // Check if this customer is selected
+
+      return InkWell(
+        onTap: () {
+          setState(() {
+            if (isSelected) {
+              _selectedCustomerId = null; // Deselect if the same customer is tapped
+              _selectedCustomerIds.clear();
+            } else {
+              _selectedCustomerId = customer.id; // Select the tapped customer
+              _selectedCustomerIds
+                ..clear()
+                ..add(customer.id);
+            }
+          });
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? Colors.blue.withOpacity(0.1)
+                : index % 2 == 0
+                    ? Colors.white
+                    : Colors.grey.shade50,
+            border: Border(
+              bottom: BorderSide(color: Colors.grey.shade300),
+            ),
+          ),
+          child: Row(
+            children: [
+              _buildCell('${startIndex + index + 1}', flex: 2, width: 90),
+              _buildCell(customer.name, flex: 2, width: 180),
+              _buildCell(customer.email ?? '-', flex: 2, width: 250),
+              _buildCell(customer.phone ?? '-', flex: 2, width: 120),
+              _buildCell(customer.contactAddress.replaceAll('\n', ', '), flex: 3, width: 200),
+              _buildCompanyTypeCell(customer.companyType ?? '', width: 120), // Ensure matching width here
+
+              Expanded(
+                flex: 2,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit, color: Colors.blue),
+                      tooltip: 'Edit Customer',
+                      onPressed: () async {
+                        // Navigate to EditCustomerPage with the customer object
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => EditCustomerPage(customer: customer),
                           ),
-                        ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  ),
+)
+
                 ),
                 _buildFooter(total, startIndex, endIndex, totalPages),
               ],
@@ -736,36 +756,36 @@ Widget _buildTableHeader(bool allVisibleCustomersSelected, bool hasVisibleCustom
         controller: horizontalController, // Use the passed horizontal controller
         child: Row(
           children: [
-            SizedBox(
-              width: checkBoxWidth, // Use defined constant width
-              child: Checkbox(
-                value: allVisibleCustomersSelected,
-                onChanged: hasVisibleCustomers
-                    ? (bool? newValue) {
-                        setState(() {
-                          if (newValue == true) {
-                            for (var customer in currentVisibleCustomers) {
-                              _selectedCustomerIds.add(customer.id);
-                            }
-                          } else {
-                            for (var customer in currentVisibleCustomers) {
-                              _selectedCustomerIds.remove(customer.id);
-                            }
-                          }
-                        });
-                      }
-                    : null,
-                activeColor: Colors.white,
-                checkColor: const Color.fromARGB(255, 1, 129, 91),
-              ),
-            ),
+            // SizedBox(
+            //   width: checkBoxWidth, // Use defined constant width
+            //   child: Checkbox(
+            //     value: allVisibleCustomersSelected,
+            //     onChanged: hasVisibleCustomers
+            //         ? (bool? newValue) {
+            //             setState(() {
+            //               if (newValue == true) {
+            //                 for (var customer in currentVisibleCustomers) {
+            //                   _selectedCustomerIds.add(customer.id);
+            //                 }
+            //               } else {
+            //                 for (var customer in currentVisibleCustomers) {
+            //                   _selectedCustomerIds.remove(customer.id);
+            //                 }
+            //               }
+            //             });
+            //           }
+            //         : null,
+            //     activeColor: Colors.white,
+            //     checkColor: const Color.fromARGB(255, 1, 129, 91),
+            //   ),
+            // ),
             // Pass the defined constant widths to _SortableHeader
             _SortableHeader(label: 'S.No', width: snoWidth, columnIndex: -1, sortColumnIndex: _sortColumnIndex, ascending: _sortAscending, onSort: (asc) => {}),
             _SortableHeader(label: 'Name', width: nameWidth, columnIndex: 1, sortColumnIndex: _sortColumnIndex, ascending: _sortAscending, onSort: (asc) => _sort(1, asc)),
             _SortableHeader(label: 'Email', width: emailWidth, columnIndex: 2, sortColumnIndex: _sortColumnIndex, ascending: _sortAscending, onSort: (asc) => _sort(2, asc)),
             _SortableHeader(label: 'Phone', width: phoneWidth, columnIndex: 3, sortColumnIndex: _sortColumnIndex, ascending: _sortAscending, onSort: (asc) => _sort(3, asc)),
             _SortableHeader(label: 'Address', width: addressWidth, columnIndex: 4, sortColumnIndex: _sortColumnIndex, ascending: _sortAscending, onSort: (asc) => _sort(4, asc)),
-            _SortableHeader(label: 'Company Type', width: companyTypeWidth, columnIndex: 5, sortColumnIndex: _sortColumnIndex, ascending: _sortAscending, onSort: (asc) => _sort(5, asc)),
+            _SortableHeader(label: 'Customer Type', width: companyTypeWidth, columnIndex: 5, sortColumnIndex: _sortColumnIndex, ascending: _sortAscending, onSort: (asc) => _sort(5, asc)),
             SizedBox( // Fixed width for actions column
               width: actionsWidth,
               child: const Text(
@@ -780,7 +800,7 @@ Widget _buildTableHeader(bool allVisibleCustomersSelected, bool hasVisibleCustom
     ),
   );
 }
-Widget _buildCell(String value, {required double width}) {
+Widget _buildCell(String value, {required double width, required int flex}) {
   return SizedBox(
     width: width,
     child: Padding( // Add padding for better visual spacing

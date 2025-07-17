@@ -2,11 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:rcspos/components/bottonnavbar.dart';
 import 'package:rcspos/components/sidebar.dart';
 import 'package:rcspos/data/sampleproduct.dart';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:hive/hive.dart';
+import 'package:http/http.dart' as http;
 import 'package:rcspos/screens/cartpage.dart';
 import 'package:rcspos/screens/customerpage.dart';
+import 'package:rcspos/screens/orderslistpage.dart';
 import 'package:rcspos/screens/orderspage.dart';
 import 'package:rcspos/screens/productpage.dart';
 import 'package:rcspos/screens/productstablepage.dart';
+import 'package:rcspos/utils/urls.dart';
 
 class HomePage extends StatefulWidget {
   final int? categoryId;
@@ -25,6 +33,10 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  String? _customerName;
+  String? _customerPhone;
+  // bool isTaxesLoaded = false;
+
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final Set<int> addedProductIds = {};
   final List<Map<String, dynamic>> cart = [];
@@ -37,25 +49,60 @@ class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
   // bool _showOnlyInStock = true; // This can be removed, as _filterMode dictates it now.
 
-  void handleAddToCart(Map<String, dynamic> product) {
-    final int productId = product['id'];
-    final int newQty = product['quantity'] ?? 1;
+  List<Map<String, dynamic>> taxes = [];
 
-    setState(() {
-      if (product.containsKey('remove') && product['remove'] == true) {
-        cart.removeWhere((item) => item['id'] == productId);
-        addedProductIds.remove(productId);
-      } else {
-        final index = cart.indexWhere((item) => item['id'] == productId);
-        if (index >= 0) {
-          cart[index]['quantity'] = newQty;
-        } else {
-          cart.add(product);
-          addedProductIds.add(productId);
-        }
-      }
-    });
+
+  void showError(String message) {
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
+
+  @override
+  void initState() {
+    super.initState();
+    _customerName = widget.categoryName; // Changed from widget.customerName to widget.categoryName as customerName is not defined in HomePage
+    _customerPhone = '';
+    
+  }
+void handleAddToCart(Map<String, dynamic> product) {
+  final int productId = product['id'];
+  final int newQty = product['quantity'] ?? 1;
+
+  double gstRate = 0.0;
+  final dynamic taxesId = product['taxes_id'];
+
+  if (taxesId is List && taxesId.isNotEmpty) {
+    final dynamic firstTax = taxesId.first;
+
+    if (firstTax is Map<String, dynamic> && firstTax.containsKey('amount')) {
+      gstRate = (firstTax['amount'] ?? 0).toDouble();
+    }
+  }
+
+  final price = (product['list_price'] ?? 0).toDouble();
+  final gstAmount = price * (gstRate / 100);
+
+  final productWithGst = Map<String, dynamic>.from(product);
+  productWithGst['gst'] = gstAmount;
+
+  setState(() {
+    if (product.containsKey('remove') && product['remove'] == true) {
+      cart.removeWhere((item) => item['id'] == productId);
+      addedProductIds.remove(productId);
+    } else {
+      final index = cart.indexWhere((item) => item['id'] == productId);
+      if (index >= 0) {
+        cart[index]['quantity'] = newQty;
+        cart[index]['gst'] = gstAmount;
+      } else {
+        cart.add(productWithGst);
+        addedProductIds.add(productId);
+      }
+    }
+
+    print("🛒 Current cart: ${jsonEncode(cart)}");
+  });
+}
 
   Future<void> selectCustomer() async {
   final result = await Navigator.push(
@@ -77,7 +124,7 @@ Future<void> _onItemTapped(int index) async {
     // Navigate to OrdersPage
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const OrdersPage()),
+      MaterialPageRoute(builder: (_) => const OrderListPage()),
     );
   } else if (index == 2) {
     final updatedCart = await Navigator.push(

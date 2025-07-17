@@ -5,6 +5,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
+import 'package:rcspos/localdb/pdtablesqlitehelper.dart';
+import 'package:rcspos/localdb/product_sqlite_helper.dart';
+
 import 'package:rcspos/utils/urls.dart'; // Assuming this provides your baseurl
 
 class Productstablepage extends StatefulWidget {
@@ -111,116 +114,124 @@ class _ProductstablepageState extends State<Productstablepage> {
     // _loading is set to false in fetchProducts's finally block
   }
 
-  Future<void> fetchProducts() async {
-    setState(() {
-      _loading = true;
-      _totalProducts = 0; // Reset total products before fetching
-      products = []; // Clear previous products immediately
-    });
+Future<void> fetchProducts() async {
+  setState(() {
+    _loading = true;
+    _totalProducts = 0;
+    products = [];
+  });
 
-    final box = await Hive.openBox('login');
-    final rawSession = box.get('session_id');
-    if (rawSession == null) {
-      showError('Session ID not found. Please login again.');
-      return;
-    }
+  final box = await Hive.openBox('login');
+  final rawSession = box.get('session_id');
+  if (rawSession == null) {
+    showError('Session ID not found. Please login again.');
+    return;
+  }
 
-    final sessionId = rawSession.contains('session_id=')
-        ? rawSession
-        : 'session_id=$rawSession';
+  final sessionId = rawSession.contains('session_id=')
+      ? rawSession
+      : 'session_id=$rawSession';
 
-    // Build the base query string
-    String queryFields = '{id,display_name,taxes_id{id,name},default_code,categ_id{id,name},list_price,qty_available}';
-    List<List<dynamic>> filters = [];
+  String queryFields = '{id,display_name,taxes_id{id,name},default_code,categ_id{id,name},list_price,qty_available}';
+  List<List<dynamic>> filters = [];
 
-    // Add category filter if present
-    if (widget.categoryId != null) {
-      filters.add(["pos_categ_ids", "=", widget.categoryId]);
-    }
+  if (widget.categoryId != null) {
+    filters.add(["pos_categ_ids", "=", widget.categoryId]);
+  }
 
-    // Add search query filter
-    if (_currentSearchQuery.isNotEmpty) {
-      filters.add([
-        "|", // OR condition for display_name or default_code
-        ["display_name", "ilike", _currentSearchQuery],
-        ["default_code", "ilike", _currentSearchQuery]
-      ]);
-    }
+  if (_currentSearchQuery.isNotEmpty) {
+    filters.add([
+      "|",
+      ["display_name", "ilike", _currentSearchQuery],
+      ["default_code", "ilike", _currentSearchQuery]
+    ]);
+  }
 
-    // Add stock filter based on _currentShowOnlyInStock
-    if (_currentShowOnlyInStock == true) {
-      filters.add(["qty_available", ">", 0]); // In Stock
-    } else if (_currentShowOnlyInStock == false) {
-      filters.add(["qty_available", "<=", 0]); // Out of Stock
-    }
-    // If _currentShowOnlyInStock is null, no stock filter is added (shows all)
+  if (_currentShowOnlyInStock == true) {
+    filters.add(["qty_available", ">", 0]);
+  } else if (_currentShowOnlyInStock == false) {
+    filters.add(["qty_available", "<=", 0]);
+  }
 
-    // Prepare pagination parameters
-    final int limit = _rowsPerPage;
-    final int offset = _currentPage * _rowsPerPage;
+  final int limit = _rowsPerPage;
+  final int offset = _currentPage * _rowsPerPage;
 
-    // Construct the URL with filters, limit, and offset
-    String apiUrl = '${baseurl}api/product.template?query=$queryFields';
-    if (filters.isNotEmpty) {
-      apiUrl += '&filter=${jsonEncode(filters)}';
-    }
-    apiUrl += '&limit=$limit&offset=$offset';
+  String apiUrl = '${baseurl}api/product.template?query=$queryFields';
+  if (filters.isNotEmpty) {
+    apiUrl += '&filter=${jsonEncode(filters)}';
+  }
+  apiUrl += '&limit=$limit&offset=$offset';
 
-    // For total count (assuming your API supports returning count)
-    String countApiUrl = '${baseurl}api/product.template?count=true';
-    if (filters.isNotEmpty) {
-      countApiUrl += '&filter=${jsonEncode(filters)}';
-    }
+  String countApiUrl = '${baseurl}api/product.template?count=true';
+  if (filters.isNotEmpty) {
+    countApiUrl += '&filter=${jsonEncode(filters)}';
+  }
 
-    try {
-      // Fetch products
-      final response = await http.get(
-        Uri.parse(apiUrl),
-        headers: {
-          HttpHeaders.cookieHeader: sessionId,
-          HttpHeaders.contentTypeHeader: 'application/json',
-        },
-      );
+  try {
+    final response = await http.get(
+      Uri.parse(apiUrl),
+      headers: {
+        HttpHeaders.cookieHeader: sessionId,
+        HttpHeaders.contentTypeHeader: 'application/json',
+      },
+    );
 
-      // Fetch total count
-      final countResponse = await http.get(
-        Uri.parse(countApiUrl),
-        headers: {
-          HttpHeaders.cookieHeader: sessionId,
-          HttpHeaders.contentTypeHeader: 'application/json',
-        },
-      );
+    final countResponse = await http.get(
+      Uri.parse(countApiUrl),
+      headers: {
+        HttpHeaders.cookieHeader: sessionId,
+        HttpHeaders.contentTypeHeader: 'application/json',
+      },
+    );
 
-      if (response.statusCode == 200 && countResponse.statusCode == 200) {
-        final jsonProducts = jsonDecode(response.body);
-        final jsonCount = jsonDecode(countResponse.body);
+    if (response.statusCode == 200 && countResponse.statusCode == 200) {
+      final jsonProducts = jsonDecode(response.body);
+      final jsonCount = jsonDecode(countResponse.body);
 
-        if (jsonProducts['result'] is List && jsonCount['count'] is int) {
-          if (mounted) { // Check if the widget is still in the tree
-            setState(() {
-              products = List<Map<String, dynamic>>.from(jsonProducts['result']);
-              _totalProducts = jsonCount['count']; // Set total count from API
-            });
-          }
-        } else {
-          showError('Invalid response format for products or count.');
-        }
-      } else {
-        showError('Failed to load products (${response.statusCode}) or count (${countResponse.statusCode})');
-      }
-    } on SocketException {
-      showError('Network unavailable. Please check your internet connection.');
-    } catch (e) {
-      showError('Error fetching products: $e');
-      debugPrint('Error fetching products: $e');
-    } finally {
+      final List<Map<String, dynamic>> productList =
+          List<Map<String, dynamic>>.from(jsonProducts['result']);
+
+      final pdHelper = PdtableSQLiteHelper();
+      await pdHelper.init();
+      await pdHelper.insertProducts(productList); // ✅ correct list
+       pdHelper.debugPrintAllProductstb();
       if (mounted) {
         setState(() {
-          _loading = false; // Ensure loading is always set to false
+          products = productList;
+          _totalProducts = jsonCount['count'];
         });
       }
+    } else {
+      showError('Failed to load products (${response.statusCode}) or count (${countResponse.statusCode})');
+    }
+  } on SocketException {
+    // 🔌 Offline fallback
+    final pdHelper = PdtableSQLiteHelper();
+    await pdHelper.init();
+    final localProducts = pdHelper.fetchProducts();
+
+    if (localProducts.isNotEmpty) {
+      setState(() {
+        products = localProducts;
+        _totalProducts = localProducts.length;
+      });
+ 
+     showError('Offline mode: Loaded products from local cache.');
+
+    } else {
+      showError('No internet connection and no local cache available.');
+    }
+  } catch (e) {
+    showError('Error fetching products: $e');
+    debugPrint('Error fetching products: $e');
+  } finally {
+    if (mounted) {
+      setState(() {
+        _loading = false;
+      });
     }
   }
+}
 
 
   void showError(String message) {
