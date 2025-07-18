@@ -3,31 +3,38 @@ import 'package:rcspos/localdb/orders_sqlite_helper.dart';
 import 'package:rcspos/screens/invoicepage.dart';
 
 class PaymentSuccessPage extends StatefulWidget {
+
   final String orderId;
   final double total;
-  final double gst; // Corresponds to 'tax' in DB
+  final double gst;
+
   final String customerName;
   final String customerPhone;
-  final String paymentMode; // Corresponds to 'payment_method' in DB
+  final String paymentMode;
   final double paidCash;
   final double paidBank;
-  final double paidCard;
 
+  final double paidCard;
+  final List<Map<String, dynamic>> cart; // ✅ new
+  final Map<String, dynamic> posConfig;  // ✅ new
 
   const PaymentSuccessPage({
     super.key,
     required this.orderId,
     required this.total,
     required this.gst,
+  
     required this.customerName,
     required this.customerPhone,
     required this.paymentMode,
     required this.paidCash,
     required this.paidBank,
     required this.paidCard,
-    // this.changeAmount,
-    // this.discount,
+    required this.cart,          // ✅ new
+    required this.posConfig, 
+ // ✅ new
   });
+
 
   @override
   State<PaymentSuccessPage> createState() => _PaymentSuccessPageState();
@@ -109,13 +116,25 @@ class _PaymentSuccessPageState extends State<PaymentSuccessPage> {
               ),
               const SizedBox(height: 12),
               OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (context) => const InvoicePage(),
-                    ),
-                  );
-                },
+         
+onPressed: () {
+  final now = DateTime.now();
+  final formattedDate = "${now.day}/${now.month}/${now.year}";
+  final invoiceNumber = widget.orderId; // or generate one
+
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (context) => InvoicePage(
+        cart: widget.cart,
+        customerName: widget.customerName,
+        customerPhone: widget.customerPhone,
+        posConfig: widget.posConfig,
+
+      ),
+    ),
+  );
+},
+
                 icon: const Icon(Icons.receipt_long),
                 label: const Text("View Invoice"),
                 style: OutlinedButton.styleFrom(

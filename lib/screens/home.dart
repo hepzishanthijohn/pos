@@ -19,13 +19,19 @@ import 'package:rcspos/utils/urls.dart';
 class HomePage extends StatefulWidget {
   final int? categoryId;
   final String? categoryName;
+
   final List<dynamic>? selectedCustomers; 
+    final Map<String, dynamic> posConfig;  // ✅ new
+
 
   const HomePage({
     super.key,
     this.categoryId,
+
+
     this.categoryName,
     this.selectedCustomers,
+    required this.posConfig, 
   });
 
   @override
@@ -152,7 +158,12 @@ Future<void> _onItemTapped(int index) async {
   } else if (index == 3) {
     final updatedCart = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => CartPage(cart: cart)),
+      MaterialPageRoute(builder: (_) => CartPage(
+     
+ 
+        cart: cart,
+        posConfig: widget.posConfig,
+        )),
     );
 
     if (updatedCart != null && updatedCart is List<Map<String, dynamic>>) {
@@ -225,7 +236,12 @@ Future<void> _onItemTapped(int index) async {
                                 final updatedCart = await Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) => CartPage(cart: cart),
+                                    builder: (_) => CartPage(
+                                
+                                   
+                                      cart: cart,
+                                      posConfig: widget.posConfig,
+                                      ),
                                   ),
                                 );
 
@@ -366,6 +382,9 @@ Future<void> _onItemTapped(int index) async {
             Expanded(
               flex: 5,
               child: CartPage(
+            
+
+                posConfig: widget.posConfig,
   cart: cart,
   customerName: selectedCustomer?['name'],
 ),

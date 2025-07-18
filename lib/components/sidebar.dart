@@ -12,8 +12,13 @@ import 'package:rcspos/utils/urls.dart';
 
 
 class AppDrawer extends StatefulWidget {
-  const AppDrawer({super.key});
 
+
+  const AppDrawer({
+    super.key,
+
+    });
+   
   @override
   State<AppDrawer> createState() => _AppDrawerState();
 }
@@ -144,16 +149,16 @@ Widget buildCategoryIcon(dynamic imageValue) {
     leading: const Icon(Icons.all_inclusive),
     title: const Text('All Products'),
     onTap: () {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => const HomePage(
-            key: ValueKey('all'), // force rebuild
-            categoryId: null,
-            categoryName: null,
-          ),
-        ),
-      );
+      // Navigator.pushReplacement(
+      //   context,
+      //   MaterialPageRoute(
+      //     builder: (_) => const HomePage(
+      //       key: ValueKey('all'), // force rebuild
+      //       categoryId: null,
+      //       categoryName: null,
+      //     ),
+      //   ),
+      // );
     },
   ),
   const Divider(height: 1),
@@ -162,16 +167,16 @@ Widget buildCategoryIcon(dynamic imageValue) {
       leading: buildCategoryIcon(cat['image_128']),
       title: Text(cat['display_name'] ?? 'Unnamed'),
       onTap: () {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => HomePage(
-              key: ValueKey(cat['id']),
-              categoryId: cat['id'],
-              categoryName: cat['display_name'],
-            ),
-          ),
-        );
+        // Navigator.pushReplacement(
+        //   context,
+        //   MaterialPageRoute(
+        //     builder: (_) => HomePage(
+        //       key: ValueKey(cat['id']),
+        //       categoryId: cat['id'],
+        //       categoryName: cat['display_name'],
+        //     ),
+        //   ),
+        // );
       },
     );
   }).toList(),

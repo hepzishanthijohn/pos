@@ -10,7 +10,12 @@ import 'package:rcspos/screens/posconfigpage.dart';
 import 'package:rcspos/utils/urls.dart';
 
 class Login extends StatelessWidget {
-  const Login({super.key});
+ 
+
+  const Login({
+    super.key,
+
+    });
 
   @override
   Widget build(BuildContext context) {
@@ -166,10 +171,12 @@ class __FormContentState extends State<_FormContent> {
 
         _showSnackBar("Login Successful!", "Welcome", ContentType.success);
 
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const POSConfigPage()),
-        );
+Navigator.pushReplacement(
+  context,
+  MaterialPageRoute(builder: (_) => const POSConfigPage()),
+);
+
+
       } else {
         _showSnackBar("Login Failed", "Invalid credentials", ContentType.failure);
       }
@@ -194,11 +201,12 @@ class __FormContentState extends State<_FormContent> {
         ContentType.warning,
       );
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const POSConfigPage()),
-      );
-    } else {
+Navigator.pushReplacement(
+  context,
+  MaterialPageRoute(builder: (context) => POSConfigPage()),
+);
+
+   } else {
       _showSnackBar("Offline Login Failed", "No saved credentials found", ContentType.failure);
     }
   } finally {

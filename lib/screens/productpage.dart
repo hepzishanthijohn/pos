@@ -84,15 +84,12 @@ Future<void> fetchProducts() async {
         final List<Map<String, dynamic>> data =
             List<Map<String, dynamic>>.from(json['result']);
 
-        /// ✅ Save to SQLite for offline use
         final productDb = ProductSQLiteHelper();
         await productDb.init();
-        await productDb.insertProducts(data); // Insert to SQLite
-        final stored = productDb.fetchProducts(); // Read back
-        
-        // productDb.debugPrintAllProducts();
-        productDb.close();
-
+        await productDb.insertProducts(data); // Save to local
+        final stored = await productDb.fetchProducts(); // ✅ await first
+        //  await productDb.close();
+    
         setState(() {
           products = stored;
           _loading = false;
@@ -104,11 +101,10 @@ Future<void> fetchProducts() async {
       showError('Failed to load products (${response.statusCode})');
     }
   } catch (e) {
-    // 🔌 Offline fallback: read from SQLite
     final productDb = ProductSQLiteHelper();
-    await productDb.init();
-    final fallback = productDb.fetchProducts();
-    productDb.close();
+await productDb.init();
+final fallback = await productDb.fetchProducts();
+// await productDb.close();
 
     if (fallback.isNotEmpty) {
       setState(() {

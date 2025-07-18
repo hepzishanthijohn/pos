@@ -13,7 +13,18 @@ import 'package:awesome_snackbar_content/awesome_snackbar_content.dart';
 
 
 class POSConfigPage extends StatefulWidget {
-  const POSConfigPage({super.key});
+  
+
+
+   
+
+    const POSConfigPage({ 
+    super.key,
+
+
+
+
+  });
 
   @override
   State<POSConfigPage> createState() => _POSConfigPageState();
@@ -25,7 +36,7 @@ class _POSConfigPageState extends State<POSConfigPage> {
   String? _errorMessage; // Added for specific error messages
 
   final String apiUrl =
-      '$baseurl/api/pos.config/?query={id,name,shop_addrs,last_session_closing_cash,last_session_closing_date,current_session_state,shop_gst_no,shop_phone_no,shop_owner_id{id,name}}';
+      '$baseurl/api/pos.config/?query={id,name,shop_phone_no,shop_addrs,last_session_closing_cash,last_session_closing_date,current_session_state,shop_gst_no,shop_phone_no,shop_owner_id{id,name}}';
 
   @override
   void initState() {
@@ -46,12 +57,11 @@ class _POSConfigPageState extends State<POSConfigPage> {
     return 'N/A';
   }
 
-  
-Future<List<Map<String, dynamic>>?> _loadPOSConfigsOffline() async {
-  final sqlite = SQLiteHelper();
-  final configs = sqlite.fetchConfigs();
-  return configs;
-}
+  Future<List<Map<String, dynamic>>?> _loadPOSConfigsOffline() async {
+    final sqlite = SQLiteHelper();
+    final configs = sqlite.fetchConfigs();
+    return configs;
+  }
 
   void _showSnackBar(String title, String message, ContentType type) {
     final snackBar = SnackBar(
@@ -70,91 +80,90 @@ Future<List<Map<String, dynamic>>?> _loadPOSConfigsOffline() async {
   }
 
   // --- API Call to Fetch POS Configurations ---
-Future<void> fetchPOSConfigs() async {
-  setState(() {
-    _loading = true;
-    _errorMessage = null;
-  });
+  Future<void> fetchPOSConfigs() async {
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
 
-  final box = await Hive.openBox('login');
+    final box = await Hive.openBox('login');
 
-  try {
-    final rawSession = box.get('session_id');
-    if (rawSession == null) {
-      showError('Session ID not found. Please login again.');
-      return;
-    }
+    try {
+      final rawSession = box.get('session_id');
+      if (rawSession == null) {
+        showError('Session ID not found. Please login again.');
+        return;
+      }
 
-    final sessionId = rawSession.contains('session_id=') ? rawSession : 'session_id=$rawSession';
+      final sessionId = rawSession.contains('session_id=') ? rawSession : 'session_id=$rawSession';
 
-    final response = await http.get(
-      Uri.parse(apiUrl),
-      headers: {
-        HttpHeaders.cookieHeader: sessionId,
-        HttpHeaders.contentTypeHeader: 'application/json',
-      },
-    );
-
- if (response.statusCode == 200) {
-  final data = jsonDecode(response.body);
-  final List configsRaw = data['result'] ?? [];
-
-  final List<Map<String, dynamic>> parsedConfigs =
-      configsRaw.map((e) => Map<String, dynamic>.from(e)).toList();
-
-  final sqlite = SQLiteHelper();
-  await sqlite.init();
-  await sqlite.insertConfigs(parsedConfigs);
-
-  // ✅ Debug print here for sqlite pos_configs contents
-  // sqlite.debugPrintAllConfigs();
-
-  sqlite.close();
-
-  setState(() {
-    _configs = parsedConfigs;
-  });
-
-  // _showSnackBar("POS Config Loaded", "Fetched from server", ContentType.success);
-}
- else {
-      final error = jsonDecode(response.body);
-      final msg = error['error']['data']['message'] ?? response.body;
-      showError("Failed to fetch POS configs: ${response.statusCode} - $msg");
-    }
-  } catch (e, stackTrace) {
-    print("Fetch error: $e\n$stackTrace");
-
-    final sqlite = SQLiteHelper();
-    await sqlite.init();
-    final offlineData = sqlite.fetchConfigs();
-    sqlite.close();
-
-    if (offlineData.isNotEmpty) {
-      setState(() {
-        _configs = offlineData;
-      });
-
-      _showSnackBar(
-        "Offline Mode",
-        "You're currently viewing offline POS data",
-        ContentType.warning,
+      final response = await http.get(
+        Uri.parse(apiUrl),
+        headers: {
+          HttpHeaders.cookieHeader: sessionId,
+          HttpHeaders.contentTypeHeader: 'application/json',
+        },
       );
-    } else {
-      setState(() {
-        _configs = [];
-      });
 
-      _showSnackBar(
-        "Offline Fetch Failed",
-        "No offline POS configs available",
-        ContentType.failure,
-      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final List configsRaw = data['result'] ?? [];
+
+        final List<Map<String, dynamic>> parsedConfigs =
+            configsRaw.map((e) => Map<String, dynamic>.from(e)).toList();
+
+        final sqlite = SQLiteHelper();
+        await sqlite.init();
+        await sqlite.insertConfigs(parsedConfigs);
+
+        // ✅ Debug print here for sqlite pos_configs contents
+        // sqlite.debugPrintAllConfigs();
+
+        sqlite.close();
+
+        setState(() {
+          _configs = parsedConfigs;
+        });
+
+        // _showSnackBar("POS Config Loaded", "Fetched from server", ContentType.success);
+      } else {
+        final error = jsonDecode(response.body);
+        final msg = error['error']['data']['message'] ?? response.body;
+        showError("Failed to fetch POS configs: ${response.statusCode} - $msg");
+      }
+    } catch (e, stackTrace) {
+      print("Fetch error: $e\n$stackTrace");
+
+      final sqlite = SQLiteHelper();
+      await sqlite.init();
+      final offlineData = sqlite.fetchConfigs();
+      sqlite.close();
+
+      if (offlineData.isNotEmpty) {
+        setState(() {
+          _configs = offlineData;
+        });
+
+        _showSnackBar(
+          "Offline Mode",
+          "You're currently viewing offline POS data",
+          ContentType.warning,
+        );
+      } else {
+        setState(() {
+          _configs = [];
+        });
+
+        _showSnackBar(
+          "Offline Fetch Failed",
+          "No offline POS configs available",
+          ContentType.failure,
+        );
+      }
+    } finally {
+      setState(() => _loading = false);
     }
-  } finally {
-    setState(() => _loading = false);
   }
-}
 
   // --- Error Message Handler ---
   void showError(String message) {
@@ -183,39 +192,42 @@ Future<void> fetchPOSConfigs() async {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-appBar: AppBar(
-  title: const Text(
-    'Point Of Sale',
-    style: TextStyle(
-      fontFamily: 'Arial',
-      color: Colors.white,
-      fontWeight: FontWeight.bold,
-    ),
-  ),
-  backgroundColor: const Color.fromARGB(255, 1, 139, 82),
-  iconTheme: const IconThemeData(color: Colors.white),
-  actions: [
-    IconButton(
-      icon: const Icon(Icons.exit_to_app),
-      tooltip: 'Logout',
-      onPressed: () {
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (context) => const Login()),
-          (route) => false,
-        );
-      },
-    ),
-  ],
-),
-     backgroundColor: const Color(0xFFF7F4FB),
+      appBar: AppBar(
+        title: const Text(
+          'Point Of Sale',
+          style: TextStyle(
+            fontFamily: 'Arial',
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        backgroundColor: const Color.fromARGB(255, 1, 139, 82),
+        iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.exit_to_app),
+            tooltip: 'Logout',
+            onPressed: () {
+              // Option A: If Login page doesn't need specific posConfig on logout
+              // Navigator.pushAndRemoveUntil(
+              //   context,
+              //   MaterialPageRoute(builder: (context) => const Login(posConfig: posConfig)), // Removed posConfig
+              //   (route) => false,
+              // );
+
+              
+            },
+          ),
+        ],
+      ),
+      backgroundColor: const Color(0xFFF7F4FB),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _errorMessage != null // Show error widget if there's an error
               ? _buildErrorWidget()
               : _configs.isEmpty
                   ? _buildNoConfigsWidget() // Show no configs widget if list is empty
-: SingleChildScrollView(
+                  : SingleChildScrollView(
                       padding: const EdgeInsets.all(5),
                       child: LayoutBuilder(
                         builder: (context, constraints) {
@@ -243,7 +255,7 @@ appBar: AppBar(
                               final String address = config['shop_addrs'] ?? 'Not set';
                               final double cash = (config['last_session_closing_cash'] ?? 0.0).toDouble();
                               final String shopGstNo = (config['shop_gst_no'] ?? 'Not set').toString();
-                              final String shopPhoneNo = config['shop_phone_no']?.toString() ?? 'Not set';
+                              final String shopPhoneNo = config['shop_phone_no']?.toString() ?? '-';
                               final String shopOwnerName = config['shop_owner_id']?['name'] ?? 'Unknown';
                               final dynamic rawDate = config['last_session_closing_date'];
                               final String date =
@@ -261,13 +273,15 @@ appBar: AppBar(
                                 shopOwnerName: shopOwnerName,
                                 date: date,
                                 sessionState: sessionState,
+                                // Pass the specific config map that was used to build this card
+                                // This is crucial for the onPressed action.
+                                specificConfig: config,
                               );
                             }).toList(),
                           );
                         },
                       ),
                     ),
-   
     );
   }
 
@@ -355,6 +369,7 @@ appBar: AppBar(
     required String shopOwnerName,
     required String date,
     required dynamic sessionState,
+    required Map<String, dynamic> specificConfig, // <-- NEW: Pass the actual config map here
   }) {
     return Card(
       elevation: 6, // Increased elevation for a floating effect
@@ -397,7 +412,7 @@ appBar: AppBar(
                 _buildInfoText('Last Closing Date: ', date),
                 // Fix: Removed Spacer() which was causing unbounded height errors in GridView context
                 // Instead, a SizedBox is used for consistent spacing before the button.
-                const SizedBox(height: 10), 
+                const SizedBox(height: 10),
 
                 Align(
                   alignment: Alignment.bottomRight, // Aligned to bottom-right
@@ -409,13 +424,23 @@ appBar: AppBar(
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       elevation: 4, // Added elevation to button
                     ),
-                    onPressed: () {
-                      // Navigate to the HomePage when "Resume" is pressed
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(builder: (context) => const HomePage()),
-                      );
-                    },
+                  onPressed: () {
+  // ✅ Print address details from posConfig
+  print("Shop Address: ${specificConfig['shop_addrs']}");
+  print("Shop Phone: ${specificConfig['shop_phone_no']}");
+  print("Shop GST No: ${specificConfig['shop_gst_no']}");
+
+  Navigator.pushReplacement(
+    context,
+    MaterialPageRoute(
+      builder: (context) => HomePage(
+        posConfig: specificConfig,
+   
+      ),
+    ),
+  );
+},
+
                     child: const Text('Resume',
                         style: TextStyle(fontFamily: 'Arial', fontSize: 16, fontWeight: FontWeight.bold)),
                   ),

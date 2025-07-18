@@ -5,14 +5,19 @@ import 'package:rcspos/screens/paymentpage.dart';
 
 class CartPage extends StatefulWidget {
   final List<Map<String, dynamic>> cart;
+
   final bool showAppBar;
   final String? customerName;
- 
+  final Map<String, dynamic> posConfig;  // ✅ new
+
   
   const CartPage({
     super.key, 
     required this.cart,
     this.customerName, 
+   
+    required this.posConfig, 
+    
     this.showAppBar = true});
 
   @override
@@ -238,6 +243,10 @@ Navigator.push(
   context,
   MaterialPageRoute(
     builder: (context) => PaymentPage(
+      cart: widget.cart,
+   
+     
+      posConfig: widget.posConfig,
       totalAmount: total,
       customerName: _customerName,       // From your state
       customerPhone: _customerPhone,     // From your state

@@ -10,13 +10,21 @@ import 'package:rcspos/utils/razorpay_web_launcher.dart';
 
 class PaymentPage extends StatefulWidget {
   final double totalAmount;
+
   final String? customerName;
   final String? customerPhone;
+    final Map<String, dynamic> posConfig;  // ✅ new
+final List<Map<String, dynamic>> cart;
+
 
   const PaymentPage({
     Key? key,
     required this.totalAmount,
     this.customerName,
+    required this.cart,
+  
+    required this.posConfig, 
+ 
     this.customerPhone,
   }) : super(key: key);
 
@@ -108,27 +116,31 @@ OrderSQLiteHelper().insertOrder(
   OrderSQLiteHelper().printAllOrders();
 
   // Navigate to success page
-  Navigator.of(context).push(
-    MaterialPageRoute(
-      builder: (context) => PaymentSuccessPage(
-        orderId: orderId,
-        total: widget.totalAmount,
-        gst: 0.0,
-        customerName: widget.customerName ?? 'Guest',
-        customerPhone: widget.customerPhone ?? '',
-        paymentMode: isCardChecked
-            ? 'Card'
-            : isCashChecked
-                ? 'Cash'
-                : isBankChecked
-                    ? 'Bank'
-                    : 'Unknown',
-        paidCash: cashAmount,
-        paidBank: bankAmount,
-        paidCard: cardAmount,
-      ),
+Navigator.of(context).push(
+  MaterialPageRoute(
+    builder: (context) => PaymentSuccessPage(
+  
+     orderId: orderId,
+      total: widget.totalAmount,
+      gst: 0.0,
+      customerName: widget.customerName ?? 'Guest',
+      customerPhone: widget.customerPhone ?? '',
+      paymentMode: isCardChecked
+          ? 'Card'
+          : isCashChecked
+              ? 'Cash'
+              : isBankChecked
+                  ? 'Bank'
+                  : 'Unknown',
+      paidCash: cashAmount,
+      paidBank: bankAmount,
+      paidCard: cardAmount,
+      cart: widget.cart, // ✅ Pass cart here
+      posConfig: widget.posConfig,
     ),
-  );
+  ),
+);
+
 }
 
 void storeSuccessfulOrder({

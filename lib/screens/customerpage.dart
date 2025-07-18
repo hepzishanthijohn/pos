@@ -6,7 +6,6 @@ import 'package:http/http.dart' as http;
 import 'package:rcspos/localdb/customersqlitehelper.dart';
 import 'package:rcspos/screens/createcustomer.dart';
 import 'package:rcspos/screens/editcustomer.dart';
-import 'package:rcspos/screens/home.dart';
 import 'package:rcspos/utils/urls.dart';
 import 'package:flutter/services.dart'; 
 
