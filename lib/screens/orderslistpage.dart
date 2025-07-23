@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
+
 import 'package:rcspos/localdb/orders_sqlite_helper.dart';
 import 'package:intl/intl.dart'; // Add this import
 import 'dart:io';
+import 'dart:convert';
 import 'package:csv/csv.dart';
 import 'package:excel/excel.dart';
 import 'package:file_saver/file_saver.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:typed_data';
+
+import 'package:rcspos/screens/InvoiceDetailspage.dart';
+import 'package:rcspos/screens/purchaseDetails.dart';
 
 // Consistent header style for DataTable
 const TextStyle _headerStyle = TextStyle(
@@ -18,13 +23,16 @@ const TextStyle _headerStyle = TextStyle(
 );
 
 class OrderListPage extends StatefulWidget {
-  const OrderListPage({Key? key}) : super(key: key);
+  
+  
+  const OrderListPage({Key? key,}) : super(key: key);
 
   @override
   State<OrderListPage> createState() => _OrderListPageState();
 }
 
 class _OrderListPageState extends State<OrderListPage> {
+  
   List<Map<String, dynamic>> _orders = [];
   String _searchQuery = '';
   int currentPage = 0;
@@ -84,6 +92,41 @@ class _OrderListPageState extends State<OrderListPage> {
         }
       });
   }
+void _showOrderDetailsDialog(BuildContext context, Map<String, dynamic> order) {
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text("Order #${order['order_id']}"),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildDetailRow("Customer Name", order['customer_name']),
+            _buildDetailRow("Phone", order['customer_phone']),
+            _buildDetailRow("Total Amount", order['total'].toString()),
+            _buildDetailRow("Tax", order['tax'].toString()),
+            _buildDetailRow("Payment Method", order['payment_method']),
+            _buildDetailRow("Paid Amount", order['paid_amount'].toString()),
+            _buildDetailRow("Change Amount", order['change_amount'].toString()),
+            _buildDetailRow("Discount", order['discount'].toString()),
+            _buildDetailRow(
+              "Date",
+              DateFormat('yyyy-MM-dd HH:mm:ss').format(
+                DateTime.parse(order['date'] ?? order['timestamp']),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text("Close"),
+        ),
+      ],
+    ),
+  );
+}
 
   Future<void> _pickStartDate() async {
     final picked = await showDatePicker(
@@ -285,6 +328,7 @@ class _OrderListPageState extends State<OrderListPage> {
 
   @override
   Widget build(BuildContext context) {
+    
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: PreferredSize(
@@ -449,53 +493,57 @@ class _OrderListPageState extends State<OrderListPage> {
                           sortColumnIndex: _sortColumnIndex,
                           sortAscending: _sortAscending,
                           columns: [
-                            const DataColumn(
+                            DataColumn(
                               label: Text('S.No', style: _headerStyle),
                             ),
                             DataColumn(
-                              label: const Text('Order ID', style: _headerStyle),
+                              label: Text('Order ID', style: _headerStyle),
                               onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
                             ),
                             DataColumn(
-                              label: const Text('Total', style: _headerStyle),
+                              label: Text('Total', style: _headerStyle),
                               numeric: true,
                               onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
                             ),
                             DataColumn(
-                              label: const Text('GST', style: _headerStyle),
+                              label: Text('GST', style: _headerStyle),
                               numeric: true,
                               onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
                             ),
                             DataColumn(
-                              label: const Text('Customer', style: _headerStyle),
+                              label: Text('Customer', style: _headerStyle),
                               onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
                             ),
                             DataColumn(
-                              label: const Text('Phone', style: _headerStyle),
+                              label: Text('Phone', style: _headerStyle),
                               onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
                             ),
                             DataColumn(
-                              label: const Text('Mode', style: _headerStyle),
+                              label: Text('Mode', style: _headerStyle),
                               onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
                             ),
                             DataColumn(
-                              label: const Text('Cash', style: _headerStyle),
+                              label: Text('Cash', style: _headerStyle),
                               numeric: true,
                               onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
                             ),
                             DataColumn(
-                              label: const Text('Bank', style: _headerStyle),
+                              label: Text('Bank', style: _headerStyle),
                               numeric: true,
                               onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
                             ),
                             DataColumn(
-                              label: const Text('Card', style: _headerStyle),
+                              label: Text('Card', style: _headerStyle),
                               numeric: true,
                               onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
                             ),
                             DataColumn(
-                              label: const Text('Timestamp', style: _headerStyle),
+                              label: Text('Time', style: _headerStyle),
                               onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
+                            ),
+                             DataColumn(
+                              label: Text('Actions', style: _headerStyle),
+                              
                             ),
                           ],
                           rows: _paginatedOrders.asMap().entries.map((entry) {
@@ -534,6 +582,26 @@ class _OrderListPageState extends State<OrderListPage> {
                                 DataCell(Text('₹${order['payment_method'] == 'Bank' ? (order['paid_amount'] ?? 0.0).toStringAsFixed(2) : '0.00'}')),
                                 DataCell(Text('₹${order['payment_method'] == 'Card' ? (order['paid_amount'] ?? 0.0).toStringAsFixed(2) : '0.00'}')),
                                 DataCell(Text(formattedTimestamp)),
+                                DataCell(Row(children: [const SizedBox(width: 8),
+IconButton(
+  icon: const Icon(Icons.visibility),
+  tooltip: 'View',
+ onPressed: () {
+  final orderId = order['order_id'].toString();
+  debugPrint("🛒 Navigating to PurchaseDetailsPage for Order ID: $orderId");
+
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => PurchaseDetailsPage(orderId: orderId),
+    ),
+  );
+},
+
+)
+
+],),),
+
                               ],
                             );
                           }).toList(),
@@ -618,4 +686,21 @@ class _OrderListPageState extends State<OrderListPage> {
       ),
     );
   }
+}
+
+
+Widget _buildDetailRow(String title, String value) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4.0),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "$title: ",
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        Expanded(child: Text(value)),
+      ],
+    ),
+  );
 }

@@ -208,12 +208,12 @@ class _POSConfigPageState extends State<POSConfigPage> {
             icon: const Icon(Icons.exit_to_app),
             tooltip: 'Logout',
             onPressed: () {
-              // Option A: If Login page doesn't need specific posConfig on logout
-              // Navigator.pushAndRemoveUntil(
-              //   context,
-              //   MaterialPageRoute(builder: (context) => const Login(posConfig: posConfig)), // Removed posConfig
-              //   (route) => false,
-              // );
+             
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (context) => const Login()), // Removed posConfig
+                (route) => false,
+              );
 
               
             },

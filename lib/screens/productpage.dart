@@ -1,7 +1,7 @@
 // product_page.dart
 import 'dart:convert';
 import 'dart:io';
-
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
@@ -37,11 +37,31 @@ class _ProductPageState extends State<ProductPage> {
   Map<int, int> cartQuantities = {};
   bool _toggleValue = false; // true = In Stock only, false = All
 
-  @override
-  void initState() {
-    super.initState();
-    _initializeData();
+@override
+void initState() {
+  super.initState();
+  fetchProducts();       // Show only from local DB
+  startSyncTimer();      // Start periodic sync
+}
+@override
+void didUpdateWidget(ProductPage oldWidget) {
+  super.didUpdateWidget(oldWidget);
+  if (oldWidget.categoryId != widget.categoryId) {
+    // category changed, refetch products
+    fetchProducts();
   }
+}
+
+
+void startSyncTimer() {
+  Timer.periodic(const Duration(minutes: 30), (timer) {
+    syncWithServer();    // Sync only updates local DB
+  });
+
+  // Optional: sync immediately at first
+  syncWithServer();
+}
+
 
   Future<void> _initializeData() async {
     setState(() => _loading = true);
@@ -51,11 +71,12 @@ class _ProductPageState extends State<ProductPage> {
   }
 
 Future<void> fetchProducts() async {
+  setState(() => _loading = true);
+
   final box = await Hive.openBox('login');
   final rawSession = box.get('session_id');
-
   if (rawSession == null) {
-    showError('Session ID not found. Please login again.');
+    showError('Session not found. Please login again.');
     return;
   }
 
@@ -63,14 +84,18 @@ Future<void> fetchProducts() async {
       ? rawSession
       : 'session_id=$rawSession';
 
-  final isCategory = widget.categoryId != null;
-  final apiUrl = isCategory
-      ? '${baseurl}api/product.template?query={id,display_name,list_price,qty_available,uom_id}&filter=[["pos_categ_ids","=",${widget.categoryId}]]'
-      : '${baseurl}api/product.template?query={id,display_name,taxes_id{id,name},default_code,categ_id{id,name},list_price,qty_available}';
+  final int? categoryId = widget.categoryId;
+
+  String url = '$baseurl/api/product.template'
+      '?query={id,display_name,taxes_id{id,name},default_code,categ_id{id,name},list_price,qty_available,image_128}';
+
+  if (categoryId != null) {
+    url += '&filter=[["categ_id", "=", $categoryId]]';
+  }
 
   try {
     final response = await http.get(
-      Uri.parse(apiUrl),
+      Uri.parse(url),
       headers: {
         HttpHeaders.cookieHeader: sessionId,
         HttpHeaders.contentTypeHeader: 'application/json',
@@ -79,44 +104,52 @@ Future<void> fetchProducts() async {
 
     if (response.statusCode == 200) {
       final json = jsonDecode(response.body);
-
       if (json['result'] is List) {
-        final List<Map<String, dynamic>> data =
-            List<Map<String, dynamic>>.from(json['result']);
-
-        final productDb = ProductSQLiteHelper();
-        await productDb.init();
-        await productDb.insertProducts(data); // Save to local
-        final stored = await productDb.fetchProducts(); // ✅ await first
-        //  await productDb.close();
-    
         setState(() {
-          products = stored;
+          products = List<Map<String, dynamic>>.from(json['result']);
           _loading = false;
         });
       } else {
-        showError('Invalid response format');
+        showError('Unexpected response format.');
       }
     } else {
-      showError('Failed to load products (${response.statusCode})');
+      showError('Failed to fetch products. Status: ${response.statusCode}');
     }
   } catch (e) {
-    final productDb = ProductSQLiteHelper();
-await productDb.init();
-final fallback = await productDb.fetchProducts();
-// await productDb.close();
-
-    if (fallback.isNotEmpty) {
-      setState(() {
-        products = fallback;
-        _loading = false;
-      });
-      showError('Offline data loaded. No internet.');
-    } else {
-      showError('Error fetching products: $e');
-    }
+    showError('Fetch error: $e');
   }
 }
+
+Future<void> syncWithServer() async {
+  final box = await Hive.openBox('login');
+  final sessionId = box.get('session_id') ?? '';
+  if (sessionId.isEmpty) return;
+
+  final url = '${baseurl}api/product.template?query={id,display_name,taxes_id{id,name},default_code,categ_id{id,name},list_price,qty_available}';
+
+  try {
+    final response = await http.get(
+      Uri.parse(url),
+      headers: {
+        HttpHeaders.cookieHeader: sessionId.startsWith('session_id=') ? sessionId : 'session_id=$sessionId',
+        HttpHeaders.contentTypeHeader: 'application/json',
+      },
+    );
+
+    if (response.statusCode == 200) {
+      final List data = jsonDecode(response.body)['result'];
+      final productDb = ProductSQLiteHelper();
+      // await ProductSQLiteHelper().updateStockAfterOrder(cart);
+
+      
+      await productDb.insertProducts(List<Map<String, dynamic>>.from(data)); // Update local
+    }
+  } catch (e) {
+    print("❌ Sync failed: $e");
+  }
+}
+
+
 
   void showError(String message) {
     setState(() => _loading = false);
@@ -142,6 +175,7 @@ final fallback = await productDb.fetchProducts();
 
   @override
   Widget build(BuildContext context) {
+    
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -261,12 +295,15 @@ final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
                         }
                       : null, // Disable tap if out of stock
               child: Card(
+                color: Colors.white,
+                  margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 16),
                 elevation: 8,
+             
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.all(3),
+                  padding: const EdgeInsets.all(8),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -290,6 +327,7 @@ final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
                         product['display_name'] ?? 'Unnamed',
                         style: const TextStyle(
                           fontWeight: FontWeight.w600,
+                          color: Color.fromARGB(255, 18, 2, 80),
                           fontSize: 17,
                           fontFamily: 'Arial',
                         ),
@@ -297,16 +335,15 @@ final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
                         overflow: TextOverflow.ellipsis,
                       ),
                        const SizedBox(height: 2),
-                     Text(
-  '${product['default_code'] is bool ? (product['default_code']! ? 'Available' : 'Not Available') : (product['default_code'] ?? 'N/A')}',
-  style: const TextStyle(
-    fontSize: 13,
-    fontWeight: FontWeight.w400,
-    fontFamily: 'Arial',
-  ),
-),
+//                      Text(
+//   '${product['default_code'] is bool ? (product['default_code']! ? 'Available' : 'Not Available') : (product['default_code'] ?? 'N/A')}',
+//   style: const TextStyle(
+//     fontSize: 13,
+//     fontWeight: FontWeight.w400,
+//     fontFamily: 'Arial',
+//   ),
+// ),
 
-                      const SizedBox(height: 2),
                       Text(
                         '₹${price.toStringAsFixed(2)}$unit',
                         style: const TextStyle(
@@ -400,6 +437,7 @@ final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
                 ),
               ),
             );
+    
           },
         );
       },
@@ -407,4 +445,4 @@ final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
   
 
   }
-}
+} 

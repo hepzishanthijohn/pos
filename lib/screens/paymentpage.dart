@@ -3,9 +3,11 @@
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:rcspos/localdb/orders_sqlite_helper.dart';
+import 'package:rcspos/localdb/product_sqlite_helper.dart';
 import 'package:rcspos/screens/RazorpayPaymentPage.dart';
+import 'package:rcspos/screens/invoicepage.dart';
 import 'package:rcspos/screens/payment_option_tile.dart';
-import 'package:rcspos/screens/paymentsuccesspage.dart';
+
 import 'package:rcspos/utils/razorpay_web_launcher.dart';
 
 class PaymentPage extends StatefulWidget {
@@ -29,6 +31,7 @@ final List<Map<String, dynamic>> cart;
   }) : super(key: key);
 
   @override
+  
   State<PaymentPage> createState() => _PaymentPageState();
 }
 
@@ -86,17 +89,45 @@ void _handleManualPaymentSuccess() async {
   _handlePayment(); // show success screen
 }
 
-void _handlePayment() {
+void _handlePayment() async {
   final orderId = DateTime.now().millisecondsSinceEpoch.toString();
 
-  // Save order to SQLite
- // Calculate the total paid amount from all sources
-double paidAmountCombined = cashAmount + bankAmount + cardAmount;
+  double paidAmountCombined = cashAmount + bankAmount + cardAmount;
+
+  print('🧾 Order Summary:');
+  print('Customer: ${widget.customerName ?? "Guest"}');
+  print('Phone: ${widget.customerPhone ?? ""}');
+  print('Total Amount: ₹${widget.totalAmount.toStringAsFixed(2)}');
+  print('Paid - Cash: ₹$cashAmount, Bank: ₹$bankAmount, Card: ₹$cardAmount');
+
+  print('\n🛒 Cart Items:');
+  double totalTax = 0.0;
+
+  for (var item in widget.cart) {
+    final name = item['display_name'] ?? 'Unnamed Item';
+    final qty = item['quantity'] ?? 1;
+    final unitPrice = item['list_price'] ?? 0.0;
+    final gstAmount = item['gst'] ?? 0.0;
+    final gstName = (item['taxes_id'] != null && item['taxes_id'].isNotEmpty)
+        ? item['taxes_id'][0]['name']
+        : 'No GST';
+    final subtotal = unitPrice * qty;
+
+    totalTax += gstAmount;
+
+    print(
+      '• $name\n'
+      '  Qty: $qty × ₹${unitPrice.toStringAsFixed(2)} = ₹${subtotal.toStringAsFixed(2)}\n'
+      '  GST: $gstName → ₹${gstAmount.toStringAsFixed(2)}\n',
+    );
+  }
+
+  print('🧾 Total GST: ₹${totalTax.toStringAsFixed(2)}');
 
 OrderSQLiteHelper().insertOrder(
   orderId: orderId,
   total: widget.totalAmount,
-  tax: 0.0, // Updated to match orders_sqlite_helper.dart parameter name
+  tax: totalTax,
   customerName: widget.customerName ?? 'Guest',
   customerPhone: widget.customerPhone ?? '',
   paymentMethod: isCardChecked
@@ -106,41 +137,99 @@ OrderSQLiteHelper().insertOrder(
           : isBankChecked
               ? 'Bank'
               : 'Unknown',
-  paidAmount: cashAmount + bankAmount + cardAmount,
+  paidAmount: paidAmountCombined,
   changeAmount: 0.0,
   discount: 0.0,
   date: DateTime.now().toIso8601String(),
 );
 
-  // 🔄 Print all orders as a table
+
   OrderSQLiteHelper().printAllOrders();
 
-  // Navigate to success page
-Navigator.of(context).push(
-  MaterialPageRoute(
-    builder: (context) => PaymentSuccessPage(
-  
-     orderId: orderId,
-      total: widget.totalAmount,
-      gst: 0.0,
-      customerName: widget.customerName ?? 'Guest',
-      customerPhone: widget.customerPhone ?? '',
-      paymentMode: isCardChecked
-          ? 'Card'
-          : isCashChecked
-              ? 'Cash'
-              : isBankChecked
-                  ? 'Bank'
-                  : 'Unknown',
-      paidCash: cashAmount,
-      paidBank: bankAmount,
-      paidCard: cardAmount,
-      cart: widget.cart, // ✅ Pass cart here
-      posConfig: widget.posConfig,
-    ),
-  ),
-);
+  // ✅ UPDATE STOCK HERE
+  await ProductSQLiteHelper().updateStockAfterOrder(widget.cart);
 
+  // --- START: MODAL AND NAVIGATION LOGIC ADDED HERE ---
+  // Show a success AlertDialog
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (BuildContext dialogContext) {
+      return AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        contentPadding: const EdgeInsets.all(24),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // GIF animation
+            Image.asset(
+              'assets/paymentsuccesslogo.gif',
+              width: 120,
+              height: 120,
+              fit: BoxFit.contain,
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Payment Successful!',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Color.fromARGB(255, 0, 150, 12),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Your payment has been successfully completed.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14),
+            ),
+          ],
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+            },
+            icon: const Icon(Icons.check_circle_outline),
+            label: const Text('OK'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.teal,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+  // After the dialog is dismissed, navigate to the invoice page
+  Navigator.of(context).pushReplacement( // Use pushReplacement to prevent going back
+    MaterialPageRoute(
+      builder: (context) => InvoicePage(
+        orderId: orderId,
+        total: widget.totalAmount,
+        gst: totalTax,
+        customerName: widget.customerName ?? 'Guest',
+        customerPhone: widget.customerPhone ?? '',
+        paymentMode: isCardChecked
+            ? 'Card'
+            : isCashChecked
+                ? 'Cash'
+                : isBankChecked
+                    ? 'Bank'
+                    : 'Unknown',
+        paidCash: cashAmount,
+        paidBank: bankAmount,
+        paidCard: cardAmount,
+        cart: widget.cart,
+        posConfig: widget.posConfig,
+      ),
+    ),
+  );
+  // --- END: MODAL AND NAVIGATION LOGIC ADDED HERE ---
 }
 
 void storeSuccessfulOrder({

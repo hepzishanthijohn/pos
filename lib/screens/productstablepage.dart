@@ -5,9 +5,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
-import 'package:rcspos/localdb/pdtablesqlitehelper.dart';
+import 'package:rcspos/localdb/pdtablesqlitehelper.dart'; // Assuming this is correct
 import 'package:rcspos/localdb/product_sqlite_helper.dart';
-
+import 'dart:math';
 import 'package:rcspos/utils/urls.dart'; // Assuming this provides your baseurl
 
 class Productstablepage extends StatefulWidget {
@@ -33,30 +33,40 @@ class Productstablepage extends StatefulWidget {
 }
 
 class _ProductstablepageState extends State<Productstablepage> {
-  List<Map<String, dynamic>> products = [];
+  // Raw data from local DB
+  List<Map<String, dynamic>> _allProducts = [];
+  // Products after applying search, category, and stock filters (before pagination)
+  List<Map<String, dynamic>> _filteredAndSortedProducts = [];
+  // Products visible on the current page
+  List<Map<String, dynamic>> _paginatedProducts = [];
+  int startIndex = 0; // Initialize with a default value
+  int endIndex = 0;   // Initialize with a default value
+
   bool _loading = true;
-  Map<int, int> cartQuantities = {};
+  Map<int, int> cartQuantities = {}; // Consider if this is still needed here
   int? _sortColumnIndex;
   bool _sortAscending = true;
 
   final TextEditingController _searchController = TextEditingController();
   String _currentSearchQuery = '';
-  String _filterLabel = 'All';
+  String _filterLabel = 'All Products'; // Default label
   bool? _currentShowOnlyInStock; // Internal state for the stock filter
   Timer? _debounce;
 
   // Pagination Variables
   int _currentPage = 0;
   int _rowsPerPage = 10;
-  int _totalProducts = 0;
+  int _totalFilteredProductsCount = 0; // Total count after filtering, before pagination
 
   @override
   void initState() {
     super.initState();
-    _currentSearchQuery = widget.searchQuery;
+    _currentSearchQuery = widget.searchQuery.toLowerCase(); // Ensure lowercase
     _searchController.text = widget.searchQuery;
     _currentShowOnlyInStock = widget.showOnlyInStock; // Initialize from widget
-    _setFilterLabel();
+
+    // Set initial filter label based on parent prop
+    _updateFilterLabel(_currentShowOnlyInStock);
 
     _initializeData();
   }
@@ -64,30 +74,29 @@ class _ProductstablepageState extends State<Productstablepage> {
   @override
   void didUpdateWidget(covariant Productstablepage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // This is crucial for reacting to parent widget changes
-    bool shouldFetch = false;
+    bool shouldReapplyFilters = false;
 
-    if (widget.searchQuery != oldWidget.searchQuery) {
-      _currentSearchQuery = widget.searchQuery;
-      _searchController.text = widget.searchQuery;
+    if (widget.searchQuery.toLowerCase() != _currentSearchQuery) {
+      _currentSearchQuery = widget.searchQuery.toLowerCase();
+      _searchController.text = widget.searchQuery; // Update controller text
       _currentPage = 0; // Reset page on search change
-      shouldFetch = true;
+      shouldReapplyFilters = true;
     }
 
-    if (widget.showOnlyInStock != oldWidget.showOnlyInStock) {
+    if (widget.showOnlyInStock != _currentShowOnlyInStock) {
       _currentShowOnlyInStock = widget.showOnlyInStock;
-      _setFilterLabel();
+      _updateFilterLabel(_currentShowOnlyInStock);
       _currentPage = 0; // Reset page on filter change
-      shouldFetch = true;
+      shouldReapplyFilters = true;
     }
 
     if (widget.categoryId != oldWidget.categoryId) {
       _currentPage = 0; // Reset page on category change
-      shouldFetch = true;
+      shouldReapplyFilters = true;
     }
 
-    if (shouldFetch) {
-      fetchProducts();
+    if (shouldReapplyFilters) {
+      _applyAllFiltersSortAndPaginate();
     }
   }
 
@@ -98,142 +107,162 @@ class _ProductstablepageState extends State<Productstablepage> {
     super.dispose();
   }
 
-  void _setFilterLabel() {
-    if (_currentShowOnlyInStock == true) {
-      _filterLabel = 'In Stock';
-    } else if (_currentShowOnlyInStock == false) {
-      _filterLabel = 'Out of Stock';
+  // Helper to update the filter label based on the selected stock filter
+  void _updateFilterLabel(bool? showOnlyInStock) {
+    if (showOnlyInStock == true) {
+      _filterLabel = 'In Stock Only';
+    } else if (showOnlyInStock == false) {
+      _filterLabel = 'Out of Stock Only';
     } else {
-      _filterLabel = 'All';
+      _filterLabel = 'All Products';
     }
   }
+
 
   Future<void> _initializeData() async {
     setState(() => _loading = true);
-    await fetchProducts();
-    // _loading is set to false in fetchProducts's finally block
+    await _fetchRawProductsFromLocalDb();
+    _applyAllFiltersSortAndPaginate(); // Apply initial filters/sort/paginate
+    setState(() => _loading = false);
   }
 
-Future<void> fetchProducts() async {
-  setState(() {
-    _loading = true;
-    _totalProducts = 0;
-    products = [];
-  });
-
-  final box = await Hive.openBox('login');
-  final rawSession = box.get('session_id');
-  if (rawSession == null) {
-    showError('Session ID not found. Please login again.');
-    return;
+  // Fetches ALL products from local DB, does NOT apply any filters
+  Future<void> _fetchRawProductsFromLocalDb() async {
+    try {
+      final productDb = ProductSQLiteHelper();
+      final localProducts = await productDb.fetchProducts();
+      setState(() {
+        _allProducts = localProducts;
+      });
+    } catch (e) {
+      showError('Failed to load products: $e');
+      setState(() {
+        _allProducts = []; // Ensure it's empty on error
+      });
+    }
   }
 
-  final sessionId = rawSession.contains('session_id=')
-      ? rawSession
-      : 'session_id=$rawSession';
+  // Central method to apply all filters, then sort, then paginate
+  void _applyAllFiltersSortAndPaginate() {
+    List<Map<String, dynamic>> tempFiltered = List.from(_allProducts);
 
-  String queryFields = '{id,display_name,taxes_id{id,name},default_code,categ_id{id,name},list_price,qty_available}';
-  List<List<dynamic>> filters = [];
+    // 1. Apply Search Filter
+    if (_currentSearchQuery.isNotEmpty) {
+      tempFiltered = tempFiltered.where((product) {
+        final name = product['display_name']?.toString().toLowerCase() ?? '';
+        final code = product['default_code'] is String && product['default_code'] != 'false'
+            ? product['default_code'].toString().toLowerCase()
+            : '';
+        final query = _currentSearchQuery;
+        return name.contains(query) || code.contains(query);
+      }).toList();
+    }
 
-  if (widget.categoryId != null) {
-    filters.add(["pos_categ_ids", "=", widget.categoryId]);
-  }
+    // 2. Apply Category Filter
+    if (widget.categoryId != null) {
+      tempFiltered = tempFiltered.where((product) {
+        return product['categ_id'] is List &&
+            product['categ_id'].isNotEmpty &&
+            product['categ_id'][0] == widget.categoryId;
+      }).toList();
+    }
 
-  if (_currentSearchQuery.isNotEmpty) {
-    filters.add([
-      "|",
-      ["display_name", "ilike", _currentSearchQuery],
-      ["default_code", "ilike", _currentSearchQuery]
-    ]);
-  }
+    if (_currentShowOnlyInStock != null) {
+      tempFiltered = tempFiltered.where((p) {
+        final qty = p['qty_available'];
+        if (qty is num) {
+          return _currentShowOnlyInStock! ? qty > 0 : qty <= 0;
+        }
+        return false; // Exclude if qty_available is not a number
+      }).toList();
+    }
 
-  if (_currentShowOnlyInStock == true) {
-    filters.add(["qty_available", ">", 0]);
-  } else if (_currentShowOnlyInStock == false) {
-    filters.add(["qty_available", "<=", 0]);
-  }
+    // 4. Sort the filtered products
+    _sortData(tempFiltered);
 
-  final int limit = _rowsPerPage;
-  final int offset = _currentPage * _rowsPerPage;
+    setState(() {
+      _filteredAndSortedProducts = tempFiltered;
+      _totalFilteredProductsCount = _filteredAndSortedProducts.length;
 
-  String apiUrl = '${baseurl}api/product.template?query=$queryFields';
-  if (filters.isNotEmpty) {
-    apiUrl += '&filter=${jsonEncode(filters)}';
-  }
-  apiUrl += '&limit=$limit&offset=$offset';
+      // 5. Paginate
+      final int totalPagesAfterFilter = (_totalFilteredProductsCount / _rowsPerPage).ceil();
 
-  String countApiUrl = '${baseurl}api/product.template?count=true';
-  if (filters.isNotEmpty) {
-    countApiUrl += '&filter=${jsonEncode(filters)}';
-  }
-
-  try {
-    final response = await http.get(
-      Uri.parse(apiUrl),
-      headers: {
-        HttpHeaders.cookieHeader: sessionId,
-        HttpHeaders.contentTypeHeader: 'application/json',
-      },
-    );
-
-    final countResponse = await http.get(
-      Uri.parse(countApiUrl),
-      headers: {
-        HttpHeaders.cookieHeader: sessionId,
-        HttpHeaders.contentTypeHeader: 'application/json',
-      },
-    );
-
-    if (response.statusCode == 200 && countResponse.statusCode == 200) {
-      final jsonProducts = jsonDecode(response.body);
-      final jsonCount = jsonDecode(countResponse.body);
-
-      final List<Map<String, dynamic>> productList =
-          List<Map<String, dynamic>>.from(jsonProducts['result']);
-
-      final pdHelper = PdtableSQLiteHelper();
-      await pdHelper.init();
-      await pdHelper.insertProducts(productList); // ✅ correct list
-       pdHelper.debugPrintAllProductstb();
-      if (mounted) {
-        setState(() {
-          products = productList;
-          _totalProducts = jsonCount['count'];
-        });
+      // Adjust _currentPage if it's out of bounds after filtering
+      if (_currentPage >= totalPagesAfterFilter && totalPagesAfterFilter > 0) {
+        _currentPage = totalPagesAfterFilter - 1;
+      } else if (totalPagesAfterFilter == 0) {
+        _currentPage = 0; // No pages if no products after filtering
       }
-    } else {
-      showError('Failed to load products (${response.statusCode}) or count (${countResponse.statusCode})');
-    }
-  } on SocketException {
-    // 🔌 Offline fallback
-    final pdHelper = PdtableSQLiteHelper();
-    await pdHelper.init();
-    final localProducts = pdHelper.fetchProducts();
 
-    if (localProducts.isNotEmpty) {
-      setState(() {
-        products = localProducts;
-        _totalProducts = localProducts.length;
-      });
- 
-     showError('Offline mode: Loaded products from local cache.');
+      startIndex = _currentPage * _rowsPerPage;
+      endIndex = (startIndex + _rowsPerPage).clamp(0, _totalFilteredProductsCount);
 
-    } else {
-      showError('No internet connection and no local cache available.');
-    }
-  } catch (e) {
-    showError('Error fetching products: $e');
-    debugPrint('Error fetching products: $e');
-  } finally {
-    if (mounted) {
-      setState(() {
-        _loading = false;
-      });
-    }
+      _paginatedProducts = _filteredAndSortedProducts.sublist(startIndex, endIndex);
+    });
   }
+// Add this method inside your _ProductstablepageState class
+void _sortData(List<Map<String, dynamic>> list) {
+  if (_sortColumnIndex == null) {
+    return; // No column selected for sorting
+  }
+
+  list.sort((a, b) {
+    dynamic aValue;
+    dynamic bValue;
+
+    // Determine values for comparison based on _sortColumnIndex
+    // Ensure these column indices match your DataTable columns and their intended sort fields
+    switch (_sortColumnIndex) {
+      case 1: // Product Name
+        aValue = (a['display_name'] as String? ?? '').toLowerCase();
+        bValue = (b['display_name'] as String? ?? '').toLowerCase();
+        break;
+      case 2: // Product Code
+        aValue = (a['default_code'] is String && a['default_code'] != 'false' ? a['default_code'] as String : '').toLowerCase();
+        bValue = (b['default_code'] is String && b['default_code'] != 'false' ? b['default_code'] as String : '').toLowerCase();
+        break;
+      case 3: // Category
+        aValue = (a['categ_id'] is Map && a['categ_id']['name'] != null)
+            ? a['categ_id']['name'].toString().toLowerCase()
+            : '';
+        bValue = (b['categ_id'] is Map && b['categ_id']['name'] != null)
+            ? b['categ_id']['name'].toString().toLowerCase()
+            : '';
+        break;
+      case 4: // Price
+        aValue = a['list_price']?.toDouble() ?? 0.0;
+        bValue = b['list_price']?.toDouble() ?? 0.0;
+        break;
+      case 5: // GST (Tax) - sorting by concatenated tax names
+        aValue = (a['taxes_id'] is List)
+            ? (a['taxes_id'] as List).map((tax) => tax is Map && tax['name'] != null ? tax['name'] as String : '').join(', ')
+            : '';
+        bValue = (b['taxes_id'] is List)
+            ? (b['taxes_id'] as List).map((tax) => tax is Map && tax['name'] != null ? tax['name'] as String : '').join(', ')
+            : '';
+        break;
+      case 6: // Stock
+        aValue = a['qty_available']?.toInt() ?? 0;
+        bValue = b['qty_available']?.toInt() ?? 0;
+        break;
+      default:
+        // For S.No or any non-sortable/unspecified columns, do nothing
+        return 0;
+    }
+
+    int comparisonResult;
+    if (aValue is String && bValue is String) {
+      comparisonResult = aValue.compareTo(bValue);
+    } else if (aValue is num && bValue is num) {
+      comparisonResult = aValue.compareTo(bValue);
+    } else {
+      comparisonResult = 0; // Fallback for incomparable types, or handle as an error
+    }
+
+    // Apply sorting direction
+    return _sortAscending ? comparisonResult : -comparisonResult;
+  });
 }
-
-
   void showError(String message) {
     if (mounted) {
       setState(() => _loading = false);
@@ -241,53 +270,25 @@ Future<void> fetchProducts() async {
     }
   }
 
+  // This `onSort` method now sorts `_filteredAndSortedProducts`
   void onSort(int columnIndex, bool ascending) {
-    List<Map<String, dynamic>> currentProducts = List.from(products);
-
-    if (columnIndex == 1) { // Product Name
-      currentProducts.sort((a, b) {
-        final nameA = (a['display_name'] as String? ?? '').toLowerCase();
-        final nameB = (b['display_name'] as String? ?? '').toLowerCase();
-        return ascending ? nameA.compareTo(nameB) : nameB.compareTo(nameA);
-      });
-    } else if (columnIndex == 2) { // Product Code
-      currentProducts.sort((a, b) {
-        final codeA = (a['default_code'] is String && a['default_code'] != 'false' ? a['default_code'] as String : '').toLowerCase();
-        final codeB = (b['default_code'] is String && b['default_code'] != 'false' ? b['default_code'] as String : '').toLowerCase();
-        return ascending ? codeA.compareTo(codeB) : codeB.compareTo(codeA);
-      });
-    } else if (columnIndex == 3) { // Price
-      currentProducts.sort((a, b) {
-        final priceA = (a['list_price'] ?? 0.0).toDouble();
-        final priceB = (b['list_price'] ?? 0.0).toDouble();
-        return ascending ? priceA.compareTo(priceB) : priceB.compareTo(priceA);
-      });
-    } else if (columnIndex == 4) { // Stock
-      currentProducts.sort((a, b) {
-        final stockA = (a['qty_available'] ?? 0).toInt();
-        final stockB = (b['qty_available'] ?? 0).toInt();
-        return ascending ? stockA.compareTo(stockB) : stockB.compareTo(stockA);
-      });
-    }
+    if (columnIndex == 0) return; // S.No is not directly sortable by content
 
     setState(() {
-      products = currentProducts;
       _sortColumnIndex = columnIndex;
       _sortAscending = ascending;
+      _applyAllFiltersSortAndPaginate(); // Re-apply sort and paginate
     });
   }
 
   int get _totalPages {
-    if (_totalProducts == 0) return 1;
-    return (_totalProducts / _rowsPerPage).ceil();
+    if (_totalFilteredProductsCount == 0) return 1;
+    return (_totalFilteredProductsCount / _rowsPerPage).ceil();
   }
 
   @override
   Widget build(BuildContext context) {
     final bool isCompact = MediaQuery.of(context).size.shortestSide < 600;
-
-    final int startIndex = _currentPage * _rowsPerPage;
-    final int endIndex = startIndex + products.length;
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
@@ -315,13 +316,12 @@ Future<void> fetchProducts() async {
                   ),
                   PopupMenuButton<bool?>(
                     onSelected: (value) {
-                      // Only update internal state here
                       setState(() {
                         _currentShowOnlyInStock = value;
-                        _setFilterLabel();
-                        _currentPage = 0; // Reset to first page when filter changes
+                        _updateFilterLabel(value); // Update the label here
+                        _currentPage = 0; // Reset page on filter change
                       });
-                      fetchProducts(); // Trigger data fetch with new filter
+                      _applyAllFiltersSortAndPaginate(); // Re-apply all filters
                     },
                     itemBuilder: (context) => const [
                       PopupMenuItem<bool?>(value: null, child: Text('All Products')),
@@ -340,7 +340,7 @@ Future<void> fetchProducts() async {
                           Icon(Icons.filter_list, color: Colors.white, size: isCompact ? 18 : 20),
                           SizedBox(width: isCompact ? 6 : 8),
                           Text(
-                            _filterLabel,
+                            _filterLabel, // Display the state-managed label
                             style: TextStyle(
                                 color: Colors.white,
                                 fontSize: isCompact ? 13 : 15,
@@ -351,7 +351,7 @@ Future<void> fetchProducts() async {
                         ],
                       ),
                     ),
-                  ),
+                  )
                 ],
               ),
               SizedBox(height: isCompact ? 10 : 12),
@@ -372,20 +372,22 @@ Future<void> fetchProducts() async {
                 child: TextField(
                   controller: _searchController,
                   onChanged: (value) {
-                    _currentPage = 0;
+                    _currentPage = 0; // Reset page on search change
                     if (_debounce?.isActive ?? false) _debounce!.cancel();
                     _debounce = Timer(const Duration(milliseconds: 500), () {
-                      if (_currentSearchQuery != value.toLowerCase()) {
+                      final newQuery = value.toLowerCase();
+                      if (_currentSearchQuery != newQuery) {
                         setState(() {
-                          _currentSearchQuery = value.toLowerCase();
+                          _currentSearchQuery = newQuery;
                         });
-                        fetchProducts();
+                        _applyAllFiltersSortAndPaginate(); // Apply filters on debounced search
                       }
                     });
                   },
                   decoration: InputDecoration(
                     hintText: 'Search products by name or code...',
-                    hintStyle: TextStyle(color: Colors.grey, fontFamily: 'Arial', fontSize: isCompact ? 14 : 15),
+                    hintStyle:
+                        TextStyle(color: Colors.grey, fontFamily: 'Arial', fontSize: isCompact ? 14 : 15),
                     border: InputBorder.none,
                     prefixIcon: Icon(Icons.search, color: Colors.grey, size: isCompact ? 20 : 22),
                     suffixIcon: _searchController.text.isNotEmpty
@@ -397,7 +399,7 @@ Future<void> fetchProducts() async {
                                 _currentSearchQuery = '';
                                 _currentPage = 0;
                               });
-                              fetchProducts();
+                              _applyAllFiltersSortAndPaginate(); // Apply filters when clearing search
                             },
                           )
                         : null,
@@ -406,13 +408,14 @@ Future<void> fetchProducts() async {
                   style: TextStyle(fontSize: isCompact ? 15 : 16, fontFamily: 'Arial', color: Colors.black87),
                   textInputAction: TextInputAction.search,
                   onSubmitted: (value) {
-                    _debounce?.cancel();
-                    if (_currentSearchQuery != value.toLowerCase()) {
+                    _debounce?.cancel(); // Cancel any pending debounce
+                    final newQuery = value.toLowerCase();
+                    if (_currentSearchQuery != newQuery) {
                       setState(() {
-                        _currentSearchQuery = value.toLowerCase();
+                        _currentSearchQuery = newQuery;
                         _currentPage = 0;
                       });
-                      fetchProducts();
+                      _applyAllFiltersSortAndPaginate(); // Apply filters on submit
                     }
                   },
                 ),
@@ -424,253 +427,185 @@ Future<void> fetchProducts() async {
       body: Column(
         children: [
           Expanded(
-            child: _loading
+            child: _loading // Assuming _loading is a state variable
                 ? const Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         CircularProgressIndicator(color: Color.fromARGB(255, 1, 139, 82)),
                         SizedBox(height: 16),
-                        Text('Loading products...', style: TextStyle(fontSize: 16,fontFamily: "Arial", color: Color.fromARGB(255, 43, 42, 42))),
+                        Text('Loading products...',
+                            style: TextStyle(fontSize: 16, fontFamily: "Arial", color: Color.fromARGB(255, 43, 42, 42))),
                       ],
                     ),
                   )
-                : products.isEmpty
+                : _totalFilteredProductsCount == 0 && _currentSearchQuery.isEmpty && widget.categoryId == null && _currentShowOnlyInStock == null
                     ? Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.search_off, size: 80, color: Colors.grey[300]),
+                            Icon(Icons.widgets_outlined, size: 80, color: Colors.grey[300]),
                             const SizedBox(height: 16),
                             Text(
-                              _currentSearchQuery.isNotEmpty
-                                  ? 'No products found for "${_searchController.text}"'
-                                  : 'No products available. Please check back later.',
+                              'No products available. Please check back later.',
                               textAlign: TextAlign.center,
                               style: TextStyle(fontSize: 18, color: Colors.grey[600]),
                             ),
                           ],
                         ),
                       )
-                    : SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            minWidth: MediaQuery.of(context).size.width,
-                          ),
-                          child: SizedBox(
-                            height: MediaQuery.of(context).size.height * 0.6,
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.vertical,
-                              child: DataTable(
-                                sortColumnIndex: _sortColumnIndex,
-                                sortAscending: _sortAscending,
-                                columnSpacing: isCompact ? 10 : 20,
-                                dataRowHeight: isCompact ? 60 : 70,
-                                headingRowHeight: isCompact ? 50 : 56,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(12),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.grey.withOpacity(0.25),
-                                      spreadRadius: 1,
-                                      blurRadius: 8,
-                                      offset: const Offset(0, 4),
-                                    ),
-                                  ],
+                    : _totalFilteredProductsCount == 0
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.search_off, size: 80, color: Colors.grey[300]),
+                                const SizedBox(height: 16),
+                                Text(
+                                  _currentSearchQuery.isNotEmpty
+                                      ? 'No products found for "${_searchController.text}"'
+                                      : 'No products match your current filters.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(fontSize: 18, color: Colors.grey[600]),
                                 ),
-                                headingRowColor: MaterialStateProperty.all(Colors.grey[100]),
-                                columns: [
-                                   DataColumn(
-                                    label: const Text('S.No', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
-                                  ),
-                                  DataColumn(
-                                    label: const Text('Product Name', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
-                                    onSort: onSort,
-                                  ),
-                                  DataColumn(
-                                    label: const Text('Product Code', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
-                                    onSort: onSort,
-                                  ),
-                                  DataColumn(
-                                    label: const Text('Category', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
-                                    onSort: onSort,
-                                  ),
-                                  DataColumn(
-                                    label: const Text('Price', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
-                                    numeric: true,
-                                    onSort: onSort,
-                                  ),
-                                  DataColumn(
-                                    label: const Text('Gst', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
-                                    numeric: true,
-                                    onSort: onSort,
-                                  ),
-                                  DataColumn(
-                                    label: const Text('Stock', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
-                                    numeric: true,
-                                    onSort: onSort,
-                                  ),
-                                  DataColumn(
-                                    label: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold,fontFamily: "Arial", fontSize: 15, color: Colors.black87)),
-                                  ),
-                                ],
-                                rows: products.asMap().entries.map((entry) {
-                                  final index = entry.key;
-                                  final product = entry.value;
-                                  final serialNumber = _currentPage * _rowsPerPage + index + 1;
-                                  final price = (product['list_price'] ?? 0.0).toDouble();
-                                  final code = product['default_code'] is String && product['default_code'] != 'false'
-                                      ? product['default_code'] as String
-                                      : '-';
-                                  final stock = (product['qty_available']?.toInt() ?? 0).toInt();
-                                  final productId = product['id'];
-                                  final inCart = widget.addedProductIds.contains(productId);
-                                  final unit =
-                                      (product['uom_id'] is List && product['uom_id'].length > 1) ? '/${product['uom_id'][1]} técnicos' : '';
- final category = product['categ_id'] is Map && product['categ_id']['name'] != null
-    ? product['categ_id']['name'] as String // Explicitly cast to String
-    : 'No Category';
-
-final taxListRaw = (product['taxes_id'] is List)
-    ? (product['taxes_id'] as List)
-        .map((tax) {
-          // Check if 'tax' element is a Map and has a 'name' key
-          if (tax is Map && tax['name'] != null) {
-            return tax['name'] as String; // Explicitly cast to String
-          } else if (tax is int) { // Handle cases where tax might just be an ID (though your API sends map)
-            return 'Tax ID: $tax'; // Or fetch its name if needed
-          }
-          return 'N/A Tax Item'; // Default for other unexpected types
-        })
-        .where((name) => name != 'N/A Tax Item' && !name.startsWith('Tax ID: ')) // Filter out internal placeholders
-        .join(', '):"s";
-
-final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
-
-// print('Category: $category');
-// print('Tax List: $taxList');
-
-
-                                  return DataRow(
-                                    cells: [
-                                      DataCell(Text(serialNumber.toString(),
-                                          style: TextStyle(fontSize: isCompact ? 13 : 14, fontFamily: 'Arial', color: Colors.black87))),
-                                     
-                                
-                                      DataCell(
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: Text(
-                                                product['display_name'] ?? 'Unnamed',
-                                                style: TextStyle(fontSize: isCompact ? 13 : 14, fontFamily: 'Arial', color: Colors.black87),
-                                                maxLines: 2,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      DataCell(Text(code,
-                                          style: TextStyle(
-                                              fontSize: isCompact ? 13 : 14,
-                                              fontFamily: 'Arial',
-                                              color: const Color.fromARGB(255, 68, 64, 64)))),
-                                      DataCell(Text(category,
-                                          style: TextStyle(
-                                              fontSize: isCompact ? 13 : 14,
-                                              fontFamily: 'Arial',
-                                              color: const Color.fromARGB(255, 68, 64, 64)))),        
-                                      DataCell(Text('₹${price.toStringAsFixed(2)}$unit',
-                                          style: TextStyle(
-                                              fontSize: isCompact ? 13 : 14,
-                                              fontFamily: 'Arial',
-                                              fontWeight: FontWeight.w600,
-                                              color: Colors.black87))),
-                                    DataCell(Text(taxList,
-                                          style: TextStyle(
-                                              fontSize: isCompact ? 13 : 14,
-                                              fontFamily: 'Arial',
-                                              color: const Color.fromARGB(255, 68, 64, 64)))),   
-                                      DataCell(
-                                        Container(
-                                          padding: EdgeInsets.symmetric(horizontal: isCompact ? 8 : 10, vertical: isCompact ? 4 : 6),
-                                          decoration: BoxDecoration(
-                                            color: stock > 0 ? Colors.green.shade50 : Colors.red.shade50,
-                                            borderRadius: BorderRadius.circular(6),
-                                            border: Border.all(color: stock > 0 ? Colors.green.shade200 : Colors.red.shade200),
-                                          ),
-                                          child: Text(
-                                            stock > 0 ? '$stock In Stock' : 'Out of Stock',
-                                            style: TextStyle(
-                                              fontSize: isCompact ? 11 : 13,
-                                              fontWeight: FontWeight.w600,
-                                              fontFamily: 'Arial',
-                                              color: stock > 0 ? Colors.green.shade800 : Colors.red.shade800,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      DataCell(
-                                        inCart
-                                            ? Container(
-                                                padding: EdgeInsets.symmetric(horizontal: isCompact ? 10 : 12, vertical: isCompact ? 5 : 6),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.blue.shade100,
-                                                  borderRadius: BorderRadius.circular(8),
-                                                  border: Border.all(color: Colors.blue.shade300),
-                                                ),
-                                                child: Text(
-                                                  'In Cart',
-                                                  style: TextStyle(
-                                                    color: Colors.blueAccent,
-                                                    fontSize: isCompact ? 12 : 13,
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                ),
-                                              )
-                                            : ElevatedButton.icon(
-                                                onPressed: stock > 0
-                                                    ? () {
-                                                        widget.onAddToCart({...product, 'quantity': 1});
-                                                        setState(() {
-                                                          widget.addedProductIds.add(productId);
-                                                          cartQuantities[productId] = 1;
-                                                        });
-                                                      }
-                                                    : null,
-                                                icon: Icon(Icons.add_shopping_cart,
-                                                    size: isCompact ? 16 : 18, color: stock > 0 ? Colors.white : Colors.grey[400]),
-                                                label: Text('Add',
-                                                    style: TextStyle(
-                                                        fontSize: isCompact ? 12 : 14,
-                                                        color: stock > 0 ? Colors.white : Colors.grey[400])),
-                                                style: ElevatedButton.styleFrom(
-                                                  backgroundColor:
-                                                      stock > 0 ? const Color.fromARGB(255, 1, 139, 82) : Colors.grey[200],
-                                                  foregroundColor: Colors.white,
-                                                  padding: EdgeInsets.symmetric(horizontal: isCompact ? 10 : 15, vertical: isCompact ? 6 : 8),
-                                                  textStyle: const TextStyle(fontFamily: 'Arial'),
-                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                                  elevation: stock > 0 ? 3 : 0,
-                                                  shadowColor: Colors.black.withOpacity(0.2),
-                                                ),
-                                              ),
-                                      ),
+                              ],
+                            ),
+                          )
+                        : SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width),
+                              child: SizedBox(
+                                height: MediaQuery.of(context).size.height -
+                                    AppBar().preferredSize.height -
+                                    MediaQuery.of(context).padding.top -
+                                    (isCompact ? 100 : 120), // Adjusted height calculation
+                                child: SingleChildScrollView(
+                                  scrollDirection: Axis.vertical,
+                                  child: DataTable(
+                                    headingRowColor: MaterialStateColor.resolveWith(
+                                      (states) => const Color.fromARGB(255, 8, 72, 150),
+                                    ),
+                                    columnSpacing: 30,
+                                    sortColumnIndex: _sortColumnIndex,
+                                    sortAscending: _sortAscending,
+                                    columns: [
+                                      DataColumn(label: Text('S.No', style: _headerStyle)),
+                                      DataColumn(label: Text('Product Name', style: _headerStyle), onSort: onSort),
+                                      DataColumn(label: Text('Product Code', style: _headerStyle), onSort: onSort),
+                                      DataColumn(label: Text('Category', style: _headerStyle), onSort: onSort),
+                                      DataColumn(label: Text('Price', style: _headerStyle), numeric: true, onSort: onSort),
+                                      DataColumn(label: Text('Gst', style: _headerStyle), numeric: true, onSort: onSort),
+                                      DataColumn(label: Text('Stock', style: _headerStyle), numeric: true, onSort: onSort),
+                                      DataColumn(label: Text('Actions', style: _headerStyle)),
                                     ],
-                                  );
-                                }).toList(),
+                                    rows: _paginatedProducts.asMap().entries.map((entry) {
+                                      final index = entry.key;
+                                      final product = entry.value;
+
+                                      final serialNumber = _currentPage * _rowsPerPage + index + 1;
+
+                                      final price = (product['list_price'] ?? 0.0).toDouble();
+                                      final code = product['default_code'] is String && product['default_code'] != 'false'
+                                          ? product['default_code'] as String
+                                          : '-';
+                                      final stock = (product['qty_available']?.toInt() ?? 0).toInt();
+                                      final productId = product['id'];
+                                      final inCart = widget.addedProductIds.contains(productId);
+                                      final unit = (product['uom_id'] is List && product['uom_id'].length > 1)
+                                          ? '/${product['uom_id'][1]} técnicos'
+                                          : '';
+                                      final category = product['categ_id'] is Map && product['categ_id']['name'] != null
+                                          ? product['categ_id']['name'] as String
+                                          : 'No Category';
+
+                                      final taxListRaw = (product['taxes_id'] is List)
+                                          ? (product['taxes_id'] as List)
+                                              .map((tax) {
+                                                if (tax is Map && tax['name'] != null) {
+                                                  return tax['name'] as String;
+                                                } else if (tax is int) {
+                                                  return 'Tax ID: $tax';
+                                                }
+                                                return 'N/A Tax Item';
+                                              })
+                                              .where((name) => name != 'N/A Tax Item' && !name.startsWith('Tax ID: '))
+                                              .join(', ')
+                                          : "s";
+
+                                      final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
+
+                                      return DataRow(
+                                        cells: [
+                                          DataCell(Text(serialNumber.toString())),
+                                          DataCell(Text(product['display_name'] ?? 'Unnamed')),
+                                          DataCell(Text(code)),
+                                          DataCell(Text(category)),
+                                          DataCell(Text('₹${price.toStringAsFixed(2)}$unit')),
+                                          DataCell(Text(taxList)),
+                                          DataCell(
+                                            Container(
+                                              padding: EdgeInsets.symmetric(
+                                                  horizontal: isCompact ? 8 : 10, vertical: isCompact ? 4 : 6),
+                                              decoration: BoxDecoration(
+                                                color: stock > 0 ? Colors.green.shade50 : Colors.red.shade50,
+                                                borderRadius: BorderRadius.circular(6),
+                                                border:
+                                                    Border.all(color: stock > 0 ? Colors.green.shade200 : Colors.red.shade200),
+                                              ),
+                                              child: Text(
+                                                stock > 0 ? '$stock In Stock' : 'Out of Stock',
+                                                style: TextStyle(
+                                                  fontSize: isCompact ? 11 : 13,
+                                                  fontWeight: FontWeight.w600,
+                                                  fontFamily: 'Arial',
+                                                  color: stock > 0 ? Colors.green.shade800 : Colors.red.shade800,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          DataCell(
+                                            IconButton(
+                                              icon: const Icon(Icons.remove_red_eye),
+                                              onPressed: () {
+                                                showDialog(
+                                                  context: context,
+                                                  builder: (_) => AlertDialog(
+                                                    title: Text(product['display_name'] ?? 'No name'),
+                                                    content: Column(
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                                      children: [
+                                                        Text("Price: ₹${product['list_price'] ?? '0'}"),
+                                                        Text(
+                                                            "Category: ${category}"), // Use already parsed category
+                                                        Text("Taxes: ${taxList}"), // Use already parsed taxList
+                                                        Text("Stock: ${stock}"),
+                                                      ],
+                                                    ),
+                                                    actions: [
+                                                      TextButton(
+                                                        onPressed: () => Navigator.pop(context),
+                                                        child: const Text("Close"),
+                                                      )
+                                                    ],
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                        ],
+                                      );
+                                    }).toList(),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
           ),
-          if (!_loading && _totalProducts > 0)
+          if (!_loading && _totalFilteredProductsCount > 0)
             _buildFooter(
-              _totalProducts,
+              _totalFilteredProductsCount,
               startIndex,
               endIndex,
               _totalPages,
@@ -681,54 +616,7 @@ final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
     );
   }
 
-  // ... (buildProductImage and _buildFooter methods are the same)
-  Widget buildProductImage(dynamic imageData) {
-    if (imageData is! String || imageData.isEmpty || imageData == 'false') {
-      return Container(
-        width: 48,
-        height: 48,
-        decoration: BoxDecoration(
-          color: Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.grey.shade200),
-        ),
-        child: const Icon(Icons.inventory_2_outlined, size: 28, color: Colors.grey),
-      );
-    }
-    try {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(6),
-        child: Image.memory(
-          base64Decode(imageData),
-          fit: BoxFit.cover,
-          width: 48,
-          height: 48,
-          errorBuilder: (context, error, stackTrace) => Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: Colors.grey.shade200),
-            ),
-            child: const Icon(Icons.broken_image, size: 28, color: Colors.grey),
-          ),
-        ),
-      );
-    } catch (_) {
-      return Container(
-        width: 48,
-        height: 48,
-        decoration: BoxDecoration(
-          color: Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.grey.shade200),
-        ),
-        child: const Icon(Icons.error_outline, size: 28, color: Colors.grey),
-      );
-    }
-  }
-
+  // --- Footer Widget Method ---
   Widget _buildFooter(
     int totalCount,
     int startIndex,
@@ -747,7 +635,7 @@ final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
             children: [
               Text(
                 'Rows per page:',
-                style: TextStyle(fontSize: isCompact ? 13 : 14, color: Colors.black87,fontFamily: "Arial",),
+                style: TextStyle(fontSize: isCompact ? 13 : 14, color: Colors.black87, fontFamily: "Arial"),
               ),
               SizedBox(width: isCompact ? 8 : 10),
               DropdownButton<int>(
@@ -762,9 +650,9 @@ final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
                   if (value != null) {
                     setState(() {
                       _rowsPerPage = value;
-                      _currentPage = 0;
+                      _currentPage = 0; // Reset to first page
                     });
-                    fetchProducts();
+                    _applyAllFiltersSortAndPaginate(); // Re-apply filters
                   }
                 },
                 style: TextStyle(fontSize: isCompact ? 13 : 14, color: Colors.black87),
@@ -786,7 +674,7 @@ final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
                         setState(() {
                           _currentPage--;
                         });
-                        fetchProducts();
+                        _applyAllFiltersSortAndPaginate(); // Go to previous page
                       }
                     : null,
                 color: _currentPage > 0 ? Colors.black87 : Colors.grey,
@@ -802,7 +690,7 @@ final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
                         setState(() {
                           _currentPage++;
                         });
-                        fetchProducts();
+                        _applyAllFiltersSortAndPaginate(); // Go to next page
                       }
                     : null,
                 color: _currentPage < totalPages - 1 ? Colors.black87 : Colors.grey,
@@ -814,3 +702,10 @@ final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
     );
   }
 }
+
+const TextStyle _headerStyle = TextStyle(
+  fontFamily: "Arial",
+  fontWeight: FontWeight.w500,
+  fontSize: 16,
+  color: Colors.white,
+);

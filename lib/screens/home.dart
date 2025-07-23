@@ -4,44 +4,41 @@ import 'package:rcspos/components/sidebar.dart';
 import 'package:rcspos/data/sampleproduct.dart';
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
+import 'package:rcspos/localdb/product_sqlite_helper.dart';
 import 'package:rcspos/screens/cartpage.dart';
 import 'package:rcspos/screens/customerpage.dart';
 import 'package:rcspos/screens/orderslistpage.dart';
-import 'package:rcspos/screens/orderspage.dart';
+import 'dart:async';
 import 'package:rcspos/screens/productpage.dart';
 import 'package:rcspos/screens/productstablepage.dart';
 import 'package:rcspos/utils/urls.dart';
 
 class HomePage extends StatefulWidget {
-  final int? categoryId;
+  final Map<String, dynamic> posConfig;
   final String? categoryName;
-
-  final List<dynamic>? selectedCustomers; 
-    final Map<String, dynamic> posConfig;  // ✅ new
-
+  final int? categoryId;
+  
 
   const HomePage({
-    super.key,
-    this.categoryId,
-
-
+    Key? key,
+    required this.posConfig,
     this.categoryName,
-    this.selectedCustomers,
-    required this.posConfig, 
-  });
+    this.categoryId
+  }) : super(key: key);
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
+
+
 class _HomePageState extends State<HomePage> {
   String? _customerName;
   String? _customerPhone;
-  // bool isTaxesLoaded = false;
+
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final Set<int> addedProductIds = {};
@@ -62,14 +59,58 @@ class _HomePageState extends State<HomePage> {
     setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
-
-  @override
+ @override
   void initState() {
     super.initState();
-    _customerName = widget.categoryName; // Changed from widget.customerName to widget.categoryName as customerName is not defined in HomePage
+
+    _customerName = widget.categoryName ?? '';
     _customerPhone = '';
-    
+
+    // ⏰ Sync with server every 30 minutes
+    Timer.periodic(const Duration(minutes: 30), (Timer timer) {
+      syncWithServer();
+    });
   }
+
+Future <void> syncWithServer() async {
+  final productHelper = ProductSQLiteHelper();
+ await ProductSQLiteHelper().updateStockAfterOrder(cart);
+ 
+
+
+  try {
+    // Fetch session
+    final box = await Hive.openBox('login');
+    final sessionIdRaw = box.get('session_id');
+    final sessionId = sessionIdRaw?.contains('session_id=') == true
+        ? sessionIdRaw
+        : 'session_id=$sessionIdRaw';
+
+    final url = '${baseurl}api/product.product'; // adjust based on actual endpoint
+
+    final response = await http.get(
+      Uri.parse(url),
+      headers: {
+        HttpHeaders.cookieHeader: sessionId,
+        HttpHeaders.contentTypeHeader: 'application/json',
+      },
+    );
+
+    if (response.statusCode == 200) {
+      final jsonData = jsonDecode(response.body);
+      final List<Map<String, dynamic>> products = List<Map<String, dynamic>>.from(jsonData['result']);
+      await productHelper.insertProducts(products);
+      debugPrint('✅ Products synced with central server');
+    } else {
+      debugPrint('❌ Failed to sync: ${response.statusCode}');
+    }
+  } catch (e) {
+    debugPrint('❌ Sync error: $e');
+  } finally {
+    productHelper.close();
+  }
+}
+
 void handleAddToCart(Map<String, dynamic> product) {
   final int productId = product['id'];
   final int newQty = product['quantity'] ?? 1;
@@ -363,19 +404,23 @@ Future<void> _onItemTapped(int index) async {
           ),
         ),
       ),
-      drawer: const AppDrawer(),
+     drawer: AppDrawer(posConfig: widget.posConfig),
+
       body: Row(
         children: [
           Expanded(
             flex: 3,
             // Pass the derived actualShowOnlyInStock
             child: ProductPage(
-              categoryId: widget.categoryId,
-              onAddToCart: handleAddToCart,
-              addedProductIds: addedProductIds,
-              searchQuery: _searchQuery,
-              showOnlyInStock: actualShowOnlyInStock, // Pass the nullable bool here
-            ),
+  key: ValueKey(widget.categoryId), // ✅ Forces rebuild
+  categoryId: widget.categoryId,
+  categoryName: widget.categoryName,
+  onAddToCart: handleAddToCart,
+  addedProductIds: addedProductIds,
+  searchQuery: _searchQuery,
+  showOnlyInStock: actualShowOnlyInStock,
+),
+
           ),
           if (isDesktop) const VerticalDivider(width: 1),
           if (isDesktop)

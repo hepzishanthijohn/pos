@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart'; // 👈 for web-safe init
 import 'package:path_provider/path_provider.dart'; // desktop/mobile only
+import 'package:rcspos/localdb/purchaseDbHelper.dart';
+
 import 'package:rcspos/screens/loginpage.dart';
 import 'package:rcspos/screens/home.dart';
 import 'package:rcspos/offlinelineNote.dart';
@@ -11,6 +13,10 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // await PurchaseDBHelper().deleteExistingDatabase();
+//  await InvoiceDBHelper().deleteExistingDatabase();
+//  await InvoiceDBHelper().database;
+//  debugPrint("✅ Invoice database recreated successfully.");
 
   // Platform-specific Hive initialization
   if (!kIsWeb) { // For mobile and desktop

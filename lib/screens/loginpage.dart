@@ -42,17 +42,29 @@ class _Logo extends StatelessWidget {
   const _Logo();
 
   @override
-  Widget build(BuildContext context) {
+Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
-      child: Text(
-        "RCS POS",
-        textAlign: TextAlign.center,
-        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-              color: const Color.fromARGB(255, 0, 124, 73),
-              fontWeight: FontWeight.bold,
-              fontSize: 28,
-            ),
+      child: Column( // Use a Column to stack the logo and potentially a smaller title/slogan
+        children: [
+          Image.asset(
+            'assets/rcslogo.png', // Path to your logo
+            height: 200, // Adjust height as needed
+            width: 200,  // Adjust width as needed, or remove for natural sizing
+            // You can add other properties like fit: BoxFit.contain,
+          ),
+          const SizedBox(height: 0), // Spacing between logo and text
+          Text(
+            "RCS POS", // You can keep a smaller text title if desired
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith( // Smaller headline for a subtitle
+                  color: const Color.fromARGB(255, 0, 124, 73),
+                  fontWeight: FontWeight.bold,
+                  // You can still apply Arial if loaded, e.g., fontFamily: 'Arial'
+                  fontSize: 22, // Adjusted font size
+                ),
+          ),
+        ],
       ),
     );
   }
@@ -68,7 +80,7 @@ class _CardWrapper extends StatelessWidget {
       color: const Color(0xFFFDFBFF), // Optional soft background
      
       child: Padding(
-        padding: const EdgeInsets.all(32.0),
+        padding: const EdgeInsets.all(2.0),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 400),
           child: child,

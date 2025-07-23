@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:rcspos/screens/cartpage.dart';
 import 'package:rcspos/screens/home.dart';
-import 'package:rcspos/screens/orderspage.dart';
 import 'package:rcspos/screens/productstablepage.dart';
 
 class CustomBottomNav extends StatelessWidget {

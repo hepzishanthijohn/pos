@@ -27,7 +27,7 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
   final cityController = TextEditingController();
   final zipController = TextEditingController();
   final vatController = TextEditingController();
-
+  bool isLoading = false;
   String _selectedType = 'person'; 
 
   @override
@@ -177,7 +177,12 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
       );
       return false;
     }
-  }
+   finally {
+  setState(() {
+    isLoading = false;
+  });
+   }}
+
 
 void _onSavePressed() async {
   if (!_formKey.currentState!.validate()) return;
@@ -287,10 +292,23 @@ void _onSavePressed() async {
             mainAxisAlignment: MainAxisAlignment.center, 
             children: [
               ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  Navigator.pop(context, true); // Go back to the previous screen
-                },
+              onPressed: () {
+  Navigator.of(ctx).pop(); // Close the dialog first
+  Future.delayed(const Duration(milliseconds: 300), () {
+   Navigator.of(context).pop(
+  Customer(
+    id: widget.customer.id,
+    name: name,
+    email: emailController.text.trim().isEmpty ? null : emailController.text.trim(),
+    phone: phoneController.text.trim().isEmpty ? null : phoneController.text.trim(),
+    contactAddress: contactAddressController.text.trim(),
+    companyType: _selectedType,
+  )
+);
+
+  });
+},
+
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green, 
                   foregroundColor: Colors.white, 
@@ -338,16 +356,16 @@ void _onSavePressed() async {
     final isMobile = MediaQuery.of(context).size.width < 600;
 
     return AlertDialog(
-      insetPadding: const EdgeInsets.all(16),
+      insetPadding: const EdgeInsets.all(10),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       elevation: 10,
       title: const Text(
         'Update Customer',
         textAlign: TextAlign.center,
         style: TextStyle(
-          fontSize: 24,
+          fontSize: 20,
           fontWeight: FontWeight.bold,
-          color: Color.fromARGB(255, 1, 139, 82),
+          color: Color.fromARGB(255, 2, 47, 88),
           fontFamily: 'Arial',
         ),
       ),
@@ -360,7 +378,7 @@ void _onSavePressed() async {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const SizedBox(height: 16), // Space below title
+                const SizedBox(height: 0), // Space below title
 
                 // Customer Type - Display only (not usually editable for existing customers)
                 // If it is editable, you'd need a StatefulBuilder and setState
@@ -375,11 +393,11 @@ void _onSavePressed() async {
                   ),
                   textAlign: isMobile ? TextAlign.left : TextAlign.center,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 10),
 
                 // Common fields (using helper)
                 _buildTextField(nameController, 'Full Name', Icons.person, hintText: 'Enter customer\'s full name', required: true),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 _buildTextField(phoneController, 'Phone Number', Icons.phone,
                     keyboardType: TextInputType.phone,
                     maxLength: 10,
@@ -390,7 +408,7 @@ void _onSavePressed() async {
                       return null;
                     },
                     hintText: 'e.g., 9876543210 (10 digits)'),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 _buildTextField(emailController, 'Email (optional)', Icons.email,
                     keyboardType: TextInputType.emailAddress,
                     inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9@._\-]'))],
@@ -401,10 +419,10 @@ void _onSavePressed() async {
                       return RegExp(pattern).hasMatch(t) ? null : 'Enter a valid email';
                     },
                     hintText: 'e.g., customer@example.com'),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
 
                 if (_selectedType == 'company') ...[
-                  const SizedBox(height: 24), // Extra space for company section
+                 // Extra space for company section
                   isMobile
                       ? Column(
                           children: _buildCompanyFields(isMobile: true),
@@ -419,7 +437,7 @@ void _onSavePressed() async {
                                 Expanded(child: Column(children: _buildCompanyFields(left: false))),
                               ],
                             ),
-                            const SizedBox(height: 16), // Space before VAT
+                            const SizedBox(height: 0), // Space before VAT
                             _buildTextField(vatController, 'VAT / GSTIN (optional)', Icons.confirmation_number, hintText: 'Enter VAT/GSTIN number'),
                           ],
                         ),

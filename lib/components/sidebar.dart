@@ -12,11 +12,11 @@ import 'package:rcspos/utils/urls.dart';
 
 
 class AppDrawer extends StatefulWidget {
-
+  final Map<String, dynamic> posConfig;
 
   const AppDrawer({
     super.key,
-
+    required this.posConfig,
     });
    
   @override
@@ -26,6 +26,7 @@ class AppDrawer extends StatefulWidget {
 class _AppDrawerState extends State<AppDrawer> {
   List<Map<String, dynamic>> categories = [];
   bool _loading = true;
+
 
   @override
   void initState() {
@@ -145,41 +146,26 @@ Widget buildCategoryIcon(dynamic imageValue) {
                 ),
 
   // Static "All Products" menu
-  ListTile(
-    leading: const Icon(Icons.all_inclusive),
-    title: const Text('All Products'),
+...categories.map((cat) {
+  return ListTile(
+    leading: buildCategoryIcon(cat['image_128']),
+    title: Text(cat['display_name'] ?? 'Unnamed'),
     onTap: () {
-      // Navigator.pushReplacement(
-      //   context,
-      //   MaterialPageRoute(
-      //     builder: (_) => const HomePage(
-      //       key: ValueKey('all'), // force rebuild
-      //       categoryId: null,
-      //       categoryName: null,
-      //     ),
-      //   ),
-      // );
+      print('AppDrawer: category tapped: id=${cat['id']}, name=${cat['name']}');
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => HomePage(
+            categoryId: cat['id'],
+            categoryName: cat['name'],
+            posConfig: widget.posConfig,
+          ),
+        ),
+      );
     },
-  ),
-  const Divider(height: 1),
-  ...categories.map((cat) {
-    return ListTile(
-      leading: buildCategoryIcon(cat['image_128']),
-      title: Text(cat['display_name'] ?? 'Unnamed'),
-      onTap: () {
-        // Navigator.pushReplacement(
-        //   context,
-        //   MaterialPageRoute(
-        //     builder: (_) => HomePage(
-        //       key: ValueKey(cat['id']),
-        //       categoryId: cat['id'],
-        //       categoryName: cat['display_name'],
-        //     ),
-        //   ),
-        // );
-      },
-    );
-  }).toList(),
+  );
+}).toList(),
+
     const Divider(),
     
     // ✅ Logout Option
