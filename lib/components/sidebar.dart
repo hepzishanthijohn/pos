@@ -5,18 +5,32 @@ import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
 import 'package:rcspos/localdb/CategorySQLiteHelper.dart';
+import 'package:rcspos/screens/customerpage.dart';
 import 'package:rcspos/screens/home.dart';
 import 'package:rcspos/screens/loginpage.dart';
+import 'package:rcspos/screens/orderslistpage.dart';
+import 'package:rcspos/screens/orderspage.dart';
 import 'package:rcspos/screens/productpage.dart';
+import 'package:rcspos/screens/productstablepage.dart';
 import 'package:rcspos/utils/urls.dart';
 
 
 class AppDrawer extends StatefulWidget {
   final Map<String, dynamic> posConfig;
+  final String? searchQuery;
+  final Function(Map<String, dynamic>)? onAddToCart;
+  final Set<int>? addedProductIds; 
+    final bool sessionState; 
+  final int posId;
 
   const AppDrawer({
     super.key,
     required this.posConfig,
+    this.searchQuery,
+    this.onAddToCart,
+    this.addedProductIds,
+     required this.posId, // Required POS ID for the specific POS config
+     required this.sessionState,
     });
    
   @override
@@ -43,14 +57,11 @@ Future<void> fetchCategories() async {
 
   if (rawSession == null) {
     setState(() => _loading = false);
-    debugPrint('Session ID not found. Please login again.');
+    debugPrint('Session ID not found.');
     return;
   }
 
-  final sessionId = rawSession.contains('session_id=')
-      ? rawSession
-      : 'session_id=$rawSession';
-
+  final sessionId = rawSession.contains('session_id=') ? rawSession : 'session_id=$rawSession';
   final url = '${baseurl}api/pos.category';
 
   try {
@@ -65,39 +76,33 @@ Future<void> fetchCategories() async {
     if (response.statusCode == 200) {
       final json = jsonDecode(response.body);
       if (json['result'] is List) {
-        final List<Map<String, dynamic>> result =
-            List<Map<String, dynamic>>.from(json['result']);
+        final List<Map<String, dynamic>> result = List<Map<String, dynamic>>.from(json['result']);
+        await catghelper.insertCategories(result); // 💾 Save to local SQLite
 
-        await catghelper.insertCategories(result); // ✅ Save to SQLite
-        // catghelper.debugPrintAllCategories(); // Debug print
         setState(() {
           categories = result;
           _loading = false;
         });
       } else {
-        setState(() => _loading = false);
-        debugPrint('Unexpected format in response');
+        throw Exception('Invalid response format');
       }
     } else {
-      setState(() => _loading = false);
-      debugPrint('Failed to fetch categories (${response.statusCode})');
+      throw HttpException('Status code: ${response.statusCode}');
     }
   } on SocketException {
-    // 🔌 Offline fallback
     final localCategories = catghelper.fetchCategories();
-    if (localCategories.isNotEmpty) {
-      setState(() {
-        categories = localCategories;
-        _loading = false;
-      });
-      debugPrint('Offline mode: Categories loaded from local DB');
-    } else {
-      setState(() => _loading = false);
-      debugPrint('No categories in local DB');
-    }
+    setState(() {
+      categories = localCategories;
+      _loading = false;
+    });
+    debugPrint('Offline mode: Categories loaded from local DB');
   } catch (e) {
-    setState(() => _loading = false);
-    debugPrint('Error: $e');
+    final localCategories = catghelper.fetchCategories();
+    setState(() {
+      categories = localCategories;
+      _loading = false;
+    });
+    debugPrint('Error loading categories: $e');
   } finally {
     catghelper.close();
   }
@@ -130,11 +135,16 @@ Widget buildCategoryIcon(dynamic imageValue) {
               padding: EdgeInsets.zero,
               children: [
                 const DrawerHeader(
-                  decoration: BoxDecoration(
-                    color: const Color.fromARGB(255, 1, 139, 82),
-                  ),
+ decoration: const BoxDecoration(
+    gradient: LinearGradient(
+      colors: [Color(0xFF185A9D),Color(0xFF43CEA2), ],
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+    ),
+  ),
                   child: Align(
                     alignment: Alignment.bottomLeft,
+                   
                     child: Text(
                       'Categories',
                       style: TextStyle(
@@ -144,31 +154,72 @@ Widget buildCategoryIcon(dynamic imageValue) {
                     ),
                   ),
                 ),
-
+                
   // Static "All Products" menu
 ...categories.map((cat) {
   return ListTile(
     leading: buildCategoryIcon(cat['image_128']),
     title: Text(cat['display_name'] ?? 'Unnamed'),
-    onTap: () {
-      print('AppDrawer: category tapped: id=${cat['id']}, name=${cat['name']}');
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => HomePage(
-            categoryId: cat['id'],
-            categoryName: cat['name'],
-            posConfig: widget.posConfig,
-          ),
-        ),
-      );
-    },
+   onTap: () {
+  print('Category tapped: id=${cat['id']}, name=${cat['name']}');
+  Navigator.pushReplacement(
+    context,
+    MaterialPageRoute(
+      builder: (_) => HomePage(
+        posId: widget.posId, 
+        sessionState: widget.sessionState,
+        categoryId: cat['id'],
+        categoryName: cat['name'], // Make sure HomePage accepts this
+        posConfig: widget.posConfig,
+      ),
+    ),
+  );
+}
+
   );
 }).toList(),
 
-    const Divider(),
-    
-    // ✅ Logout Option
+  
+ListTile(
+                leading: const Icon(Icons.inventory_2), // Changed from Icons.grid_view
+                title: const Text('Inventory'),
+                onTap: () {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => Productstablepage(
+                       
+                        searchQuery: widget.searchQuery ?? '',
+                      ),
+                    ),
+                  );
+                },
+              ),
+ListTile(
+                leading: const Icon(Icons.people), // Changed from Icons.grid_view
+                title: const Text('Customers'),
+                onTap: () {
+  Navigator.push( // Keeping this as Navigator.push for standard back button behavior
+    context,
+    MaterialPageRoute(builder: (context) => CustomerPage(
+       posId: widget.posId,
+        sessionState: widget.sessionState,
+    )),
+  );
+},
+              ), 
+           ListTile(
+                leading: const Icon(Icons.receipt_long), // Changed from Icons.people
+                title: const Text('Sales'),
+                onTap: () {
+                  Navigator.push( // Keeping this as Navigator.push for standard back button behavior
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const OrderListPage(),
+                    ),
+                  );
+                },
+              ),// ✅ Logout Option
     ListTile(
       leading: const Icon(Icons.exit_to_app, color: Colors.redAccent),
       title: const Text('Logout', style: TextStyle(color: Colors.redAccent)),

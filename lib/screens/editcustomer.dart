@@ -4,13 +4,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
+import 'package:rcspos/localdb/customersqlitehelper.dart';
 import 'package:rcspos/screens/customerpage.dart';
 import 'package:rcspos/utils/urls.dart';
 
 
+
 class EditCustomerPage extends StatefulWidget {
+    final Map<String, dynamic> posConfig;
   final Customer customer;
-  const EditCustomerPage({required this.customer, super.key});
+  const EditCustomerPage({
+    required this.customer,
+    required this.posConfig,
+   super.key});
 
   @override
   State<EditCustomerPage> createState() => _EditCustomerPageState();
@@ -21,43 +27,41 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
   final nameController = TextEditingController();
   final phoneController = TextEditingController();
   final emailController = TextEditingController();
-  final contactAddressController = TextEditingController(); // Renamed for consistency
-
-  final street2Controller = TextEditingController();
-  final cityController = TextEditingController();
-  final zipController = TextEditingController();
+  final contactAddressController = TextEditingController();
   final vatController = TextEditingController();
+
   bool isLoading = false;
-  String _selectedType = 'person'; 
+  String _selectedType = 'person';
 
   @override
   void initState() {
     super.initState();
     nameController.text = widget.customer.name;
     phoneController.text = widget.customer.phone ?? '';
-    emailController.text = widget.customer.email ?? '';
-    contactAddressController.text = widget.customer.contactAddress ?? '';
-    _selectedType = widget.customer.companyType ?? 'person'; // Initialize selected type
+    emailController.text = widget.customer.email ??"";
+    // IMPORTANT: Ensure widget.customer.contactAddress contains the full, multi-line string
+    // This line directly populates the controller with whatever is passed.
+    contactAddressController.text = widget.customer.contactAddress;
+    // Also initialize VAT if your Customer model supports it and it's being passed
 
+    _selectedType = widget.customer.companyType;
 
     debugPrint('Editing customer with ID: ${widget.customer.id}');
+    debugPrint('Initial Contact Address for display: "${contactAddressController.text}"');
+    debugPrint('Initial Contact Address Length: ${contactAddressController.text.length}');
   }
 
   @override
   void dispose() {
-    // Dispose all controllers to prevent memory leaks
     nameController.dispose();
     phoneController.dispose();
     emailController.dispose();
     contactAddressController.dispose();
-    street2Controller.dispose();
-    cityController.dispose();
-    zipController.dispose();
     vatController.dispose();
     super.dispose();
   }
 
-  // Re-use the helper from the AddCustomerDialog for consistency
+  // Helper function for building text fields
   Widget _buildTextField(
     TextEditingController controller,
     String labelText,
@@ -68,12 +72,16 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
     List<TextInputFormatter>? inputFormatters,
     String? Function(String?)? validator,
     bool required = false,
+    int? maxLines, // Added for multi-line support
+    int? minLines, // Added for multi-line support
   }) {
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
       maxLength: maxLength,
       inputFormatters: inputFormatters,
+      maxLines: maxLines, // Apply maxLines
+      minLines: minLines, // Apply minLines
       decoration: InputDecoration(
         labelText: labelText,
         hintText: hintText,
@@ -94,262 +102,220 @@ class _EditCustomerPageState extends State<EditCustomerPage> {
         return null;
       },
       style: const TextStyle(fontFamily: 'Arial'),
-      autovalidateMode: (validator != null || required) ? AutovalidateMode.onUserInteraction : AutovalidateMode.disabled,
+      autovalidateMode: (validator != null || required)
+          ? AutovalidateMode.onUserInteraction
+          : AutovalidateMode.disabled,
     );
   }
 
-  // Helper function for building the company-specific fields (adapted for Edit dialog)
-  List<Widget> _buildCompanyFields({bool isMobile = false, bool? left}) {
-    List<Widget> fields = [];
-    if (isMobile) {
-      fields = [
-        _buildTextField(contactAddressController, 'Contact Address', Icons.location_on, hintText: 'Building, Street, Area'),
-        const SizedBox(height: 16),
-        _buildTextField(street2Controller, 'Suite/Unit (optional)', Icons.meeting_room, hintText: 'Apartment, Suite, Unit, Building'),
-        const SizedBox(height: 16),
-        _buildTextField(cityController, 'City', Icons.location_city, hintText: 'e.g., Chennai'),
-        const SizedBox(height: 16),
-        _buildTextField(zipController, 'ZIP', Icons.local_post_office,
-            keyboardType: TextInputType.number,
-            maxLength: 6,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            validator: (v) => (v != null && v.trim().isNotEmpty && v.trim().length != 6) ? 'ZIP must be 6 digits' : null),
-        const SizedBox(height: 16),
-        _buildTextField(vatController, 'VAT / GSTIN (optional)', Icons.confirmation_number, hintText: 'Enter VAT/GSTIN number'),
-      ];
-    } else {
-      // Web/Wide layout (two columns)
-      if (left == true) {
-        fields = [
-          _buildTextField(contactAddressController, 'Contact Address', Icons.location_on, hintText: 'Building, Street, Area'),
-          const SizedBox(height: 16),
-          _buildTextField(cityController, 'City', Icons.location_city, hintText: 'e.g., Chennai'),
-          const SizedBox(height: 16),
-        ];
-      } else { // right == true
-        fields = [
-          _buildTextField(street2Controller, 'Suite/Unit (optional)', Icons.meeting_room, hintText: 'Apartment, Suite, Unit, Building'),
-          const SizedBox(height: 16),
-          _buildTextField(zipController, 'ZIP', Icons.local_post_office,
-              keyboardType: TextInputType.number,
-              maxLength: 6,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              validator: (v) => (v != null && v.trim().isNotEmpty && v.trim().length != 6) ? 'ZIP must be 6 digits' : null),
-          const SizedBox(height: 16),
-        ];
-      }
-    }
-    return fields;
-  }
 
-  Future<bool> _updateCustomer(int id, Map<String, dynamic> updatedData) async {
-    final box = await Hive.openBox('login');
-    final raw = box.get('session_id') as String?;
-    final session = raw!.contains('session_id=') ? raw : 'session_id=$raw';
-
-    final uri = Uri.parse('${baseurl}/mobile/update_customer/$id');
-    final headers = {
-      HttpHeaders.contentTypeHeader: 'application/x-www-form-urlencoded',
-      HttpHeaders.cookieHeader: session,
-    };
-
-    final body = updatedData.map((key, value) => MapEntry(key, value?.toString() ?? ''));
-
-    try {
-      final response = await http.put(uri, headers: headers, body: body);
-      debugPrint('Response status: ${response.statusCode}');
-      debugPrint('Response body: ${response.body}');
-
-      if (response.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Customer updated', style: TextStyle(fontFamily: 'Arial')), backgroundColor: Colors.green),
-        );
-        return true;
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update: ${response.body}', style: TextStyle(fontFamily: 'Arial')), backgroundColor: Colors.red),
-        );
-        return false;
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e', style: TextStyle(fontFamily: 'Arial')), backgroundColor: Colors.red),
-      );
-      return false;
-    }
-   finally {
-  setState(() {
-    isLoading = false;
-  });
-   }}
-
-
-void _onSavePressed() async {
-  if (!_formKey.currentState!.validate()) return;
-
-  final name = nameController.text.trim();
-
-  // Step 1: Show confirmation dialog
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text('Confirm Update', style: TextStyle(fontFamily: 'Arial', fontWeight: FontWeight.bold)),
-      content: Text(
-        'Are you sure you want to update "$name"?',
-        style: const TextStyle(fontFamily: 'Arial', fontSize: 15),
+  List<Widget> _buildCompanyFields() {
+    return [
+      _buildTextField(
+        contactAddressController,
+        'Contact Address',
+        Icons.location_on,
+        hintText: 'Building, Street, Area',
+        minLines: 3, // Allow at least 3 lines to be visible initially
+        maxLines: null, // Allow unlimited lines (will scroll if content is long)
+        // If you want a fixed height with scrolling, use expands: true in TextFormField and set a fixed height for its parent.
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
-          child: const Text('Cancel', style: TextStyle(fontFamily: 'Arial')),
-        ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.green,
-            foregroundColor: Colors.white,
-          ),
-          onPressed: () => Navigator.pop(ctx, true),
-          child: const Text('Yes, Update', style: TextStyle(fontFamily: 'Arial')),
-        ),
-      ],
-    ),
-  );
+      const SizedBox(height: 16),
+      _buildTextField(vatController, 'VAT / GSTIN (optional)', Icons.confirmation_number,
+          hintText: 'Enter VAT/GSTIN number'),
+    ];
+  }
+Future<bool> _updateCustomer(int id, Map<String, dynamic> updatedData) async {
+  setState(() {
+    isLoading = true; // Show loading indicator
+  });
 
-  if (confirmed != true) return; // Exit if user cancels
+  try {
+    // Update local database first and mark as unsynced
+    await Customersqlitehelper.instance.updateLocalCustomer(id, updatedData);
 
-  // Step 2: Prepare data
-  final updated = {
-    'name': name,
-    'phone': phoneController.text.trim(),
-    'email': emailController.text.trim().isNotEmpty ? emailController.text.trim() : null,
-    'company_type': _selectedType,
-    if (_selectedType == 'company') 'contact_address': contactAddressController.text.trim().isNotEmpty ? contactAddressController.text.trim() : null,
-    if (_selectedType == 'company') 'street2': street2Controller.text.trim().isNotEmpty ? street2Controller.text.trim() : null,
-    if (_selectedType == 'company') 'city': cityController.text.trim().isNotEmpty ? cityController.text.trim() : null,
-    if (_selectedType == 'company') 'zip': zipController.text.trim().isNotEmpty ? zipController.text.trim() : null,
-    if (_selectedType == 'company') 'vat': vatController.text.trim().isNotEmpty ? vatController.text.trim() : null,
-  };
+    // Sync all unsynced customers (including this one)
+    // await Customersqlitehelper.instance.syncAllUnsyncedCustomers;
 
-  debugPrint('Updating customer with: $updated');
+    // Show success snackbar
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Customer updated locally and syncing...'),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
 
-  // Step 3: Update customer
-  final success = await _updateCustomer(widget.customer.id, updated);
+    return true;
+  } catch (e) {
+    // Show error snackbar
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Error updating customer: $e'),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    return false;
+  } finally {
+    setState(() {
+      isLoading = false;
+    });
+  }
+}
 
-  if (success) {
-    // Show success dialog
-    showDialog(
+
+  void _onSavePressed() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final name = nameController.text.trim();
+
+    final confirmed = await showDialog<bool>(
       context: context,
-      barrierDismissible: false, // User must tap OK to close
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        elevation: 8.0, // Add some elevation for a subtle shadow effect
-        contentPadding: const EdgeInsets.fromLTRB(24.0, 20.0, 24.0, 0.0), // Adjust content padding
-        content: Column(
-          mainAxisSize: MainAxisSize.min, // Make the column take minimum space
-          children: [
-            // Icon and Title on the same line using a Row
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center, // Center the icon and title together
-              mainAxisSize: MainAxisSize.min, // Keep the row size minimal
-              children: [
-                const Icon(
-                  Icons.thumb_up, // The thumbs up icon
-                  color: Colors.green, // Green color for success
-                  size: 36, // Adjust size to fit well beside text
-                ),
-                const SizedBox(width: 10), // Space between icon and text
-                const Text(
-                  'Success!',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontFamily: 'Arial',
-                    fontWeight: FontWeight.bold,
-                    fontSize: 22, // Keep font size consistent with previous title
-                    color: Colors.black87,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16), // Space between the icon/title row and the message
-
-            // Content message
-            Text(
-              'Customer "$name" updated successfully!',
-              textAlign: TextAlign.center, // Center align message
-              style: const TextStyle(
-                fontFamily: 'Arial',
-                fontSize: 16, 
-                color: Color.fromARGB(255, 38, 117, 41),
-                fontWeight: FontWeight.w500, 
-              ),
-            ),
-          ],
+        title: const Text('Confirm Update', style: TextStyle(fontFamily: 'Arial', fontWeight: FontWeight.bold)),
+        content: Text(
+          'Are you sure you want to update "$name"?',
+          style: const TextStyle(fontFamily: 'Arial', fontSize: 15),
         ),
-        actionsPadding: const EdgeInsets.fromLTRB(20.0, 30.0, 20.0, 20.0), 
         actions: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center, 
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(fontFamily: 'Arial')),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Yes, Update', style: TextStyle(fontFamily: 'Arial')),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    // Prepare data. Removed .trim() for contactAddress to preserve newlines.
+    final updatedData = {
+      'name': name,
+      'phone': phoneController.text.trim(),
+      'email': emailController.text.trim().isNotEmpty ? emailController.text.trim() : null,
+      'company_type': _selectedType,
+      if (_selectedType == 'company') 'contact_address': contactAddressController.text, // NO TRIM HERE
+      if (_selectedType == 'company') 'vat': vatController.text.trim(),
+    };
+
+    debugPrint('Attempting to update customer with ID: ${widget.customer.id}');
+    debugPrint('Payload: $updatedData');
+
+    final success = await _updateCustomer(widget.customer.id, updatedData);
+
+    if (success) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          elevation: 8.0,
+          contentPadding: const EdgeInsets.fromLTRB(24.0, 20.0, 24.0, 0.0),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              ElevatedButton(
-              onPressed: () {
-  Navigator.of(ctx).pop(); // Close the dialog first
-  Future.delayed(const Duration(milliseconds: 300), () {
-   Navigator.of(context).pop(
-  Customer(
-    id: widget.customer.id,
-    name: name,
-    email: emailController.text.trim().isEmpty ? null : emailController.text.trim(),
-    phone: phoneController.text.trim().isEmpty ? null : phoneController.text.trim(),
-    contactAddress: contactAddressController.text.trim(),
-    companyType: _selectedType,
-  )
-);
-
-  });
-},
-
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green, 
-                  foregroundColor: Colors.white, 
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), 
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8), 
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.thumb_up, color: Colors.green, size: 36),
+                  const SizedBox(width: 10),
+                  const Text(
+                    'Success!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: 'Arial',
+                      fontWeight: FontWeight.bold,
+                      fontSize: 22,
+                      color: Colors.black87,
+                    ),
                   ),
-                  elevation: 6, 
-                ),
-                child: const Text(
-                  'OK',
-                  style: TextStyle(
-                    fontFamily: 'Arial',
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Customer "$name" updated successfully!',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontFamily: 'Arial',
+                  fontSize: 16,
+                  color: Color.fromARGB(255, 38, 117, 41),
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ],
           ),
-        ],
-      ),
-    );
-  } else {
-    // Show failure dialog
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Update Failed', style: TextStyle(fontFamily: 'Arial', fontWeight: FontWeight.bold)),
-        content: const Text('Failed to update customer. Please try again.', style: TextStyle(fontFamily: 'Arial')),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK', style: TextStyle(fontFamily: 'Arial')),
-          ),
-        ],
-      ),
-    );
+          actionsPadding: const EdgeInsets.fromLTRB(20.0, 30.0, 20.0, 20.0),
+          actions: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(ctx).pop(); // Close the success dialog
+                    Future.delayed(const Duration(milliseconds: 300), () {
+                      // Pass back the updated customer data to the previous screen (customerpage.dart)
+                      Navigator.of(context).pop(
+                        Customer(
+                          id: widget.customer.id,
+                          name: name,
+                          email: emailController.text.trim().isEmpty ? null : emailController.text.trim(),
+                          phone: phoneController.text.trim().isEmpty ? null : phoneController.text.trim(),
+                          contactAddress: contactAddressController.text, // NO TRIM HERE
+                          companyType: _selectedType,
+                          posConfig: widget.posConfig,
+                        ),
+                      );
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    elevation: 6,
+                  ),
+                  child: const Text(
+                    'OK',
+                    style: TextStyle(
+                      fontFamily: 'Arial',
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    } else {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Update Failed', style: TextStyle(fontFamily: 'Arial', fontWeight: FontWeight.bold)),
+          content: const Text('Failed to update customer. Please try again.', style: TextStyle(fontFamily: 'Arial')),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK', style: TextStyle(fontFamily: 'Arial')),
+            ),
+          ],
+        ),
+      );
+    }
   }
-}
 
   @override
   Widget build(BuildContext context) {
@@ -369,8 +335,8 @@ void _onSavePressed() async {
           fontFamily: 'Arial',
         ),
       ),
-      content: Container(
-        width: isMobile ? double.infinity : 650, // Consistent width
+      content: SizedBox( // Changed from Container to SizedBox for explicit width/height
+        width: isMobile ? double.infinity : 650,
         child: SingleChildScrollView(
           child: Form(
             key: _formKey,
@@ -378,11 +344,8 @@ void _onSavePressed() async {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const SizedBox(height: 0), // Space below title
+                const SizedBox(height: 0),
 
-                // Customer Type - Display only (not usually editable for existing customers)
-                // If it is editable, you'd need a StatefulBuilder and setState
-                // For now, it's just a display, so no state change needed.
                 Text(
                   'Customer Type: ${_selectedType == 'person' ? 'Person' : 'Company'}',
                   style: const TextStyle(
@@ -395,7 +358,6 @@ void _onSavePressed() async {
                 ),
                 const SizedBox(height: 10),
 
-                // Common fields (using helper)
                 _buildTextField(nameController, 'Full Name', Icons.person, hintText: 'Enter customer\'s full name', required: true),
                 const SizedBox(height: 12),
                 _buildTextField(phoneController, 'Phone Number', Icons.phone,
@@ -422,32 +384,24 @@ void _onSavePressed() async {
                 const SizedBox(height: 12),
 
                 if (_selectedType == 'company') ...[
-                 // Extra space for company section
+                  // Company specific fields
+                  // On mobile, they stack vertically
                   isMobile
                       ? Column(
-                          children: _buildCompanyFields(isMobile: true),
+                          children: _buildCompanyFields(),
                         )
-                      : Column( // Column to stack the Rows for wide layout
-                          children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(child: Column(children: _buildCompanyFields(left: true))),
-                                const SizedBox(width: 16),
-                                Expanded(child: Column(children: _buildCompanyFields(left: false))),
-                              ],
-                            ),
-                            const SizedBox(height: 0), // Space before VAT
-                            _buildTextField(vatController, 'VAT / GSTIN (optional)', Icons.confirmation_number, hintText: 'Enter VAT/GSTIN number'),
-                          ],
+                      // On wider screens, they are in a single column (no two-column layout for now)
+                      : Column(
+                          children: _buildCompanyFields(),
                         ),
                 ],
+                if (isLoading) const LinearProgressIndicator(), // Show loading indicator
               ],
             ),
           ),
         ),
       ),
-      actionsPadding: const EdgeInsets.fromLTRB(28, 0, 28, 28), // Padding around action buttons
+      actionsPadding: const EdgeInsets.fromLTRB(28, 0, 28, 28),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
@@ -461,7 +415,7 @@ void _onSavePressed() async {
         ElevatedButton.icon(
           icon: const Icon(Icons.save),
           label: const Text('Save', style: TextStyle(fontFamily: 'Arial', fontWeight: FontWeight.bold)),
-          onPressed: _onSavePressed,
+          onPressed: isLoading ? null : _onSavePressed, // Disable button while loading
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color.fromARGB(255, 1, 139, 82),
             foregroundColor: Colors.white,

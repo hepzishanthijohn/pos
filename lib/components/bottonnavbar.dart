@@ -39,10 +39,7 @@ class CustomBottomNav extends StatelessWidget {
           icon: Icon(Icons.shopping_cart),
           label: 'Cart',
         ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.more_horiz),
-          label: 'More',
-        ),
+       
       ],
     );
   }

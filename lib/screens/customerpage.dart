@@ -1,18 +1,20 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
 import 'package:rcspos/localdb/customersqlitehelper.dart';
+import 'package:rcspos/screens/CreditCustomersPage.dart';
+
 import 'package:rcspos/screens/createcustomer.dart';
+
 import 'package:rcspos/screens/editcustomer.dart'; // Ensure this exists and expects a 'Customer' object
+import 'package:rcspos/screens/home.dart';
 import 'package:rcspos/utils/urls.dart';
 import 'package:flutter/services.dart';
+import 'dart:async';
 
-// Assuming baseurl is defined in urls.dart
-// const String baseurl = 'YOUR_BASE_URL';
-
-// Define _headerStyle here (as it was referenced but not defined)
 const TextStyle _headerStyle = TextStyle(
   fontFamily: "Arial",
   fontWeight: FontWeight.w500,
@@ -26,168 +28,167 @@ class Customer {
   final String? email;
   final String? phone;
   final String contactAddress;
+  final Map<String, dynamic> posConfig;
   final String companyType;
 
   Customer({
     required this.id,
     required this.name,
+    required this.posConfig,
     this.email,
     this.phone,
     required this.contactAddress,
     required this.companyType,
   });
 
-  factory Customer.fromJson(Map<String, dynamic> json) {
+  factory Customer.fromMap(Map<String, dynamic> map) {
     return Customer(
-      id: json['id'],
-      name: json['name'] ?? '',
-      email: json['email'] == false ? null : json['email'],
-      phone: json['phone'] == false ? null : json['phone'],
-      contactAddress: (json['contact_address'] == false || json['contact_address'] == null) ? '' : json['contact_address'].toString(),
-      companyType: (json['company_type'] == false || json['company_type'] == null) ? 'person' : json['company_type'].toString(), // Default to 'person'
+      id: map['id'] as int,
+      name: map['name'] ?? '',
+      email: map['email'] == false ? null : map['email'] as String?,
+      phone: map['phone'] == false ? null : map['phone'] as String?,
+      contactAddress: map['contact_address'] ?? '',
+      companyType: map['company_type'] ?? 'person',
+      posConfig: map['posConfig'] is Map<String, dynamic>
+          ? map['posConfig'] as Map<String, dynamic>
+          : <String, dynamic>{},
     );
   }
-
-  // No need for toMap() if EditCustomerPage directly accepts Customer object
-  // But if it does, ensure it correctly handles the keys.
 }
 
 class CustomerPage extends StatefulWidget {
-  const CustomerPage({Key? key}) : super(key: key);
+
+   final bool sessionState; 
+  final int posId; 
+  const CustomerPage({Key? key,
+    required this.posId, 
+     required this.sessionState,
+  }) : super(key: key);
 
   @override
   State<CustomerPage> createState() => _CustomerPageState();
 }
 
 class _CustomerPageState extends State<CustomerPage> {
-  List<Customer> customers = []; // All customers fetched from network/DB
-  // For DataRows, we use _selectedCustomerIds (Set) for multi-selection.
-  // _selectedCustomerId is not strictly needed for DataTable's `selected` property.
-  // Keeping it as null implies no single selection, which works with the Set.
-  int? _selectedCustomerId; 
-  final Set<int> _selectedCustomerIds = {}; // For multi-selection checkboxes
+  late final Customersqlitehelper customerDbHelper;
+  List<Customer> customers = [];
+  int? _selectedCustomerId;
+  final Set<int> _selectedCustomerIds = {};
 
-  // Pagination & Sorting state
+  final ScrollController _verticalTableScrollController = ScrollController();
   int rowsPerPage = 10;
   int currentPage = 0;
   int? _sortColumnIndex;
   bool _sortAscending = true;
-
-  // Filtering state
   String _searchQuery = '';
   String _companyFilter = 'all';
 
-  // Loading state
   bool isLoading = false;
-
-  // Scroll Controllers (removed redundant _scrollController, DataTables usually handle their own scrolling within Expanded/SingleChildScrollViews)
-  // No explicit sync needed for DataColumn / DataRow horizontal scrolls as they are part of the same table
-  final ScrollController _verticalTableScrollController = ScrollController();
+  Timer? _syncTimer;
 
 
   @override
   void initState() {
     super.initState();
-    fetchCustomers();
-  }
-
-  @override
-  void dispose() {
-    _verticalTableScrollController.dispose();
-    super.dispose();
-  }
-
-  final Customersqlitehelper customerDbHelper = Customersqlitehelper();
-
-  Future<void> fetchCustomers() async {
-    setState(() {
-      isLoading = true;
-      _selectedCustomerIds.clear(); // Clear selections on data refresh
-      _selectedCustomerId = null; // Clear single selection
+    customerDbHelper = Customersqlitehelper.instance;
+    customerDbHelper.init().then((_) async {
+      await _loadCustomersFromLocalDb();
+      _syncTimer = Timer.periodic(const Duration(minutes: 30), (_) async {
+        await _syncCustomersWithServer();
+      });
+      // Start syncing in background without blocking UI
+      // _syncCustomersWithServer();
     });
+  }
 
+
+
+Future<void> _loadCustomersFromLocalDb() async {
+  setState(() => isLoading = true);
+  final localCustomers = customerDbHelper.fetchCustomers();
+  // customerDbHelper.debugPrintAllCustomers();
+
+  setState(() {
+    customers = localCustomers.map((map) => Customer.fromMap(map)).toList();
+    isLoading = false;
+  });
+}
+  Future<void> _loadCustomers() async {
+  final loadedCustomers = await customerDbHelper.fetchCustomers;
+  setState(() {
+     loadedCustomers;
+  });
+}
+  Future<void> _syncCustomersWithServer() async {
+    setState(() => isLoading = true);
     final box = await Hive.openBox('login');
-    final rawSession = box.get('session_id');
-
-    if (rawSession == null) {
+    final session = box.get('session_id');
+    if (session == null) {
       setState(() => isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Session not found. Please log in again.', style: TextStyle(fontFamily: 'Arial')),
-        ),
+        const SnackBar(content: Text('No session found, cannot sync customers')),
       );
       return;
     }
 
-    await customerDbHelper.init();
-
-    final sessionId = rawSession.contains('session_id=') ? rawSession : 'session_id=$rawSession';
-    final url = Uri.parse('$baseurl/api/res.partner?query={id,name,email,phone,contact_address,company_type}&filter=[["customer_rank",">=",0]]');
-
+    final apiUrl =
+        '$baseurl/api/res.partner?query={id,name,email,phone,contact_address,company_type}&filter=[["customer_rank",">=",0]]';
     try {
-      final response = await http.get(url, headers: {
-        HttpHeaders.cookieHeader: sessionId,
-        HttpHeaders.contentTypeHeader: 'application/json',
-      });
+      final response = await http.get(
+        Uri.parse(apiUrl),
+        headers: {
+          HttpHeaders.cookieHeader: session,
+          HttpHeaders.contentTypeHeader: 'application/json',
+        },
+      );
 
       if (response.statusCode == 200) {
-        final result = json.decode(response.body)['result'];
-        final List<Map<String, dynamic>> rawList = List<Map<String, dynamic>>.from(result);
+         print("unsynced customers:");
+        print(customerDbHelper.fetchUnsyncedCustomers());
+        await customerDbHelper.syncCustomersApi(response.body);
+        await _loadCustomersFromLocalDb();
 
-        await customerDbHelper.insertCustomers(rawList);
+        final unsyncedCustomers = await customerDbHelper.fetchUnsyncedCustomers();
+if (unsyncedCustomers.isEmpty) {
+  debugPrint('No unsynced customers to upload');
+  return;
+}
 
-        setState(() {
-          customers = rawList.map((e) => Customer.fromJson(e)).toList();
-          currentPage = 0;
-          _sortColumnIndex = null;
-          _sortAscending = true;
-        });
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load customers: ${response.body}', style: const TextStyle(fontFamily: 'Arial')),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('Failed to fetch customers: ${response.statusCode}')),
         );
       }
     } catch (e) {
-      debugPrint("Network error while fetching customers: $e");
-
-      final fallback = customerDbHelper.fetchCustomers();
-      if (fallback.isNotEmpty) {
-        setState(() {
-          customers = fallback.map((e) => Customer.fromJson(e)).toList();
-          currentPage = 0;
-          _sortColumnIndex = null;
-          _sortAscending = true;
-        });
-
-        // ScaffoldMessenger.of(context).showSnackBar(
-        //   const SnackBar(
-        //     content: Text('Loaded customers from local SQLite cache.', style: TextStyle(fontFamily: 'Arial')),
-        //     backgroundColor: Colors.orange,
-        //   ),
-        // );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Network error: $e', style: const TextStyle(fontFamily: 'Arial')),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error fetching customers: $e')),
+      );
     } finally {
       setState(() => isLoading = false);
     }
   }
 
+ 
+  
+
+
+ 
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    super.dispose();
+  }
+
+// Add in your Customersqlitehelper class
+
+
   void _onSort(int columnIndex, bool ascending) {
     setState(() {
       _sortColumnIndex = columnIndex;
       _sortAscending = ascending;
-      currentPage = 0; // Reset pagination when sorting
-      _selectedCustomerIds.clear(); // Clear selections on sort change
-      _selectedCustomerId = null; // Clear single selection
+      currentPage = 0; 
+      _selectedCustomerIds.clear(); 
+      _selectedCustomerId = null;
     });
   }
 
@@ -196,7 +197,7 @@ class _CustomerPageState extends State<CustomerPage> {
       const SnackBar(content: Text('Downloading as PDF...', style: TextStyle(fontFamily: 'Arial'))),
     );
     debugPrint("Download as PDF tapped");
-    // TODO: Implement actual PDF generation
+  
   }
 
   void _downloadAsExcel() {
@@ -204,7 +205,7 @@ class _CustomerPageState extends State<CustomerPage> {
       const SnackBar(content: Text('Downloading as Excel...', style: TextStyle(fontFamily: 'Arial'))),
     );
     debugPrint("Download as Excel tapped");
-    // TODO: Implement actual Excel generation
+
   }
 
   void _showDownloadOptions() {
@@ -293,10 +294,12 @@ class _CustomerPageState extends State<CustomerPage> {
       );
 
       if (response.statusCode == 200) {
+      
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Customer deleted successfully!', style: TextStyle(fontFamily: 'Arial')), backgroundColor: Colors.green),
         );
-        fetchCustomers(); // Refresh the list
+      
+        // fetchCustomers(); 
       } else {
         final error = json.decode(response.body)['error']['message'] ?? 'Unknown error';
         ScaffoldMessenger.of(context).showSnackBar(
@@ -310,6 +313,13 @@ class _CustomerPageState extends State<CustomerPage> {
       );
       debugPrint('Exception during customer deletion: $e');
     }
+  }
+  void _backwardArrow() {
+    
+      Navigator.pop(context, {
+        
+      });
+
   }
 
   void _startPaymentProcessForSelectedCustomers() {
@@ -343,6 +353,8 @@ class _CustomerPageState extends State<CustomerPage> {
 
   @override
   Widget build(BuildContext context) {
+        final double screenWidth = MediaQuery.of(context).size.width;
+    final bool isMobile = screenWidth < 600; 
     // 1. Filtering Logic
     final filteredCustomers = customers.where((c) {
       final lowerCaseSearchQuery = _searchQuery.toLowerCase();
@@ -390,6 +402,7 @@ class _CustomerPageState extends State<CustomerPage> {
         return _sortAscending ? Comparable.compare(aValue, bValue) : Comparable.compare(bValue, aValue);
       });
     }
+    
 
     // 3. Pagination Logic (applied AFTER filtering and sorting)
     final totalFilteredCustomers = filteredCustomers.length;
@@ -399,135 +412,104 @@ class _CustomerPageState extends State<CustomerPage> {
     final visibleCustomers = filteredCustomers.sublist(startIndex, endIndex);
 
 
-    // 3. Pagination Logic (applied AFTER filtering and sorting)
-    // final totalFilteredCustomers = filteredCustomers.length;
-    // final totalPages = (totalFilteredCustomers / rowsPerPage).ceil();
-    // final startIndex = currentPage * rowsPerPage;
-    // final endIndex = (startIndex + rowsPerPage).clamp(0, totalFilteredCustomers);
-    // final visibleCustomers = filteredCustomers.sublist(startIndex, endIndex);
-
-    // Determine if all visible customers are selected for the header checkbox
     final bool allVisibleCustomersSelected =
         visibleCustomers.isNotEmpty && visibleCustomers.every((customer) => _selectedCustomerIds.contains(customer.id));
 
     return Scaffold(
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(120),
+  appBar: PreferredSize(
+        preferredSize: Size.fromHeight(isMobile ? 180 : 120),
         child: AppBar(
-          backgroundColor: const Color.fromARGB(255, 1, 129, 91),
+          backgroundColor: Colors.transparent,
           elevation: 0,
           automaticallyImplyLeading: false,
-          flexibleSpace: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      GestureDetector(
-                        onTap: () {
-                          Navigator.pop(context);
-                        },
-                        child: Row(
-                          children: const [
-                            Icon(Icons.arrow_back, color: Colors.white, size: 24),
-                            SizedBox(width: 8),
-                            Text(
-                              'Customer Table',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 20,
-                                fontFamily: 'Arial',
-                                fontWeight: FontWeight.bold,
+          flexibleSpace: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color.fromARGB(255, 44, 145, 113), Color(0xFF185A9D)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        GestureDetector(
+                        onTap: _backwardArrow,
+  
+
+                          child: Row(
+                            children: const [
+                              Icon(Icons.arrow_back, color: Colors.white, size: 24),
+                              SizedBox(width: 8),
+                              Text(
+                                'Customer Table',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontFamily: 'Arial',
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Container(
-                        height: 40,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: Colors.white, width: 0.8),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: _companyFilter,
-                            dropdownColor: Colors.white,
-                            icon: const Icon(Icons.arrow_drop_down, color: Colors.white, size: 24),
-                            selectedItemBuilder: (BuildContext context) {
-                              return <String>['all', 'person', 'company'].map<Widget>((String itemValue) {
-                                return Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    itemValue.toUpperCase(),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontFamily: 'Arial',
-                                      fontSize: 14,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                );
-                              }).toList();
-                            },
-                            items: const [
-                              DropdownMenuItem(value: 'all', child: Text('All', style: TextStyle(color: Colors.black, fontFamily: 'Arial'))),
-                              DropdownMenuItem(value: 'person', child: Text('Person', style: TextStyle(color: Colors.black, fontFamily: 'Arial'))),
-                              DropdownMenuItem(value: 'company', child: Text('Company', style: TextStyle(color: Colors.black, fontFamily: 'Arial'))),
                             ],
-                            onChanged: (value) {
-                              if (value != null) {
-                                setState(() {
-                                  _companyFilter = value;
-                                  currentPage = 0; // Reset pagination on filter change
-                                  _selectedCustomerIds.clear(); // Clear selections on filter change
-                                });
-                              }
-                            },
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
+                        Flexible( 
+                          child: Wrap( 
+                            spacing: 10, 
+                            runSpacing: 10, 
+                            alignment: WrapAlignment.end, 
+                            children: [
+                              _buildCompanyFilterDropdown(),
+                              _buildCreditCustomersButton(),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    child: TextField(
-                      onChanged: (value) {
-                        setState(() {
-                          _searchQuery = value;
-                          currentPage = 0; // Reset pagination on search change
-                          _selectedCustomerIds.clear(); // Clear selections on search change
-                        });
-                      },
-                      decoration: const InputDecoration(
-                        hintText: 'Search customers...',
-                        hintStyle: TextStyle(color: Colors.grey, fontFamily: 'Arial'),
-                        border: InputBorder.none,
-                        prefixIcon: Icon(Icons.search, color: Colors.grey),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    const SizedBox(height: 10),
+                    Container(
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(28),
                       ),
-                      style: const TextStyle(fontSize: 16, fontFamily: 'Arial', color: Colors.black87),
+                      child: TextField(
+                        onChanged: (value) {
+                          setState(() {
+                            _searchQuery = value;
+                            currentPage = 0; // Reset pagination on search change
+                            _selectedCustomerIds.clear(); // Clear selections on search change
+                          });
+                        },
+                        decoration: const InputDecoration(
+                          hintText: 'Search customers...',
+                          hintStyle: TextStyle(color: Colors.grey, fontFamily: 'Arial'),
+                          border: InputBorder.none,
+                          prefixIcon: Icon(Icons.search, color: Colors.grey),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        ),
+                        style: const TextStyle(fontSize: 16, fontFamily: 'Arial', color: Colors.black87),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ),
-      body: isLoading
+           body: isLoading
           ? const Center(child: CircularProgressIndicator(color: Color.fromARGB(255, 1, 129, 91)))
           : Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0), // Padding for the whole content
+            
+              padding: const EdgeInsets.symmetric(horizontal: 10.0), // Padding for the whole content
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -539,34 +521,36 @@ class _CustomerPageState extends State<CustomerPage> {
                         spacing: 12,
                         runSpacing: 12,
                         children: [
-                          ElevatedButton.icon(
-                            onPressed: () async {
-                              final result = await showDialog(
-                                context: context,
-                                barrierColor: Colors.black.withAlpha((0.5 * 255).toInt()),
-                                builder: (ctx) => const CreateCustomerPage(),
-                              );
-                              if (result == true) {
-                                fetchCustomers();
-                              }
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color.fromARGB(255, 201, 202, 201),
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                            ),
-                            icon: const Icon(Icons.add, color: Colors.black),
-                            label: const Text(
-                              'ADD CUSTOMER',
-                              style: TextStyle(
-                                color: Colors.black,
-                                fontFamily: 'Arial',
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
+ElevatedButton.icon(
+ onPressed: () async {
+  final result = await showDialog<bool>(
+    context: context,
+    barrierColor: Colors.black.withAlpha((0.5 * 255).toInt()),
+    builder: (ctx) => const CreateCustomerPage(),
+  );
+  if (result == true) {
+    await _syncCustomersWithServer(); // Reloads local DB data
+     await  _loadCustomers(); 
+  }
 
+
+  },
+  style: ElevatedButton.styleFrom(
+    backgroundColor: const Color.fromARGB(255, 201, 202, 201),
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+  ),
+  icon: const Icon(Icons.add, color: Colors.black),
+  label: const Text(
+    'ADD CUSTOMER',
+    style: TextStyle(
+      color: Colors.black,
+      fontFamily: 'Arial',
+      fontSize: 13,
+      fontWeight: FontWeight.w600,
+    ),
+  ),
+),
                           // Payment Process Button
                           if (_selectedCustomerIds.isNotEmpty)
                             ElevatedButton.icon(
@@ -588,7 +572,6 @@ class _CustomerPageState extends State<CustomerPage> {
                               ),
                             ),
 
-                          // Download Button
                           ElevatedButton.icon(
                             onPressed: _showDownloadOptions,
                             style: ElevatedButton.styleFrom(
@@ -634,160 +617,145 @@ class _CustomerPageState extends State<CustomerPage> {
                       ),
                     )
                   else
-                    Expanded(
-                      child: SingleChildScrollView(
-                        controller: _verticalTableScrollController, // Vertical scroll for the whole table content
-                        scrollDirection: Axis.vertical,
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: ConstrainedBox(
-                            constraints: BoxConstraints(
-                              // Ensure minimum width to allow horizontal scrolling
-                              minWidth: MediaQuery.of(context).size.width - 32, // Subtract horizontal padding
-                            ),
-child: DataTable(
-                              headingRowColor: MaterialStateProperty.resolveWith<Color>(
-                                (Set<MaterialState> states) => const Color.fromARGB(255, 8, 72, 150),
-                              ),
-                              headingTextStyle: _headerStyle,
-                              columnSpacing: 0,
-                              dataRowColor: MaterialStateProperty.resolveWith<Color>((states) {
-                               
-                                if (states.contains(MaterialState.selected)) {
-                                  return Colors.blue.withOpacity(0.2);
-                                }
-                                return Colors.white; // Default color
-                              }),
-                              sortColumnIndex: _sortColumnIndex == 0 ? null : _sortColumnIndex, // Adjust index if 0 was for checkbox
-                              sortAscending: _sortAscending,
-                           
-                              showCheckboxColumn: false, 
-                              columns: [
-                        
-                                DataColumn(
-                                  label: SizedBox( child: const Text('S.No')),
-                                
-                                ),
-                                DataColumn(
-                                  label: const SizedBox( child: Text('Name')),
-                                  onSort: (columnIndex, ascending) => _onSort(1, ascending), 
-                                ),
-                                DataColumn(
-                                  label: const SizedBox( child: Text('Email')),
-                                  onSort: (columnIndex, ascending) => _onSort(2, ascending), 
-                                ),
-                                DataColumn(
-                                  label: const SizedBox( child: Text('Phone')),
-                                  onSort: (columnIndex, ascending) => _onSort(3, ascending), 
-                                ),
-                                DataColumn(
-                                  label: const SizedBox( child: Text('Address')),
-                                  onSort: (columnIndex, ascending) => _onSort(4, ascending), 
-                                ),
-                                DataColumn(
-                                  label: const SizedBox( child: Text('Company Type')),
-                                  onSort: (columnIndex, ascending) => _onSort(5, ascending), 
-                                ),
-                                DataColumn(
-                                  label: const SizedBox( child: Text('Actions')),
-                                 
-                                ),
-                              ],
-                              rows: visibleCustomers.asMap().entries.map((entry) {
-                                final int index = entry.key;
-                                final Customer customer = entry.value;
-                                final bool isSelected = _selectedCustomerIds.contains(customer.id);
+               Expanded(
+  child: SingleChildScrollView(
+    
+    controller: _verticalTableScrollController, // vertical scroll
+    scrollDirection: Axis.vertical,
+    child: SingleChildScrollView(
+      
+      scrollDirection: Axis.horizontal,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minWidth: MediaQuery.of(context).size.width,
+        ),
+        
+        child: DataTable(
+          
+          headingRowColor: MaterialStateProperty.resolveWith<Color>(
+            (Set<MaterialState> states) => const Color.fromARGB(255, 8, 72, 150),
+          ),
+          headingTextStyle: _headerStyle,
+          columnSpacing: 10,
+          dataRowColor: MaterialStateProperty.resolveWith<Color>((states) {
+            if (states.contains(MaterialState.selected)) {
+              return Colors.blue.withOpacity(0.2);
+            }
+            return Colors.white;
+          }),
+          sortColumnIndex: _sortColumnIndex == 0 ? null : _sortColumnIndex,
+          sortAscending: _sortAscending,
+          showCheckboxColumn: false,
+          columns: [
+            DataColumn(label: const Text('S.No')),
+            DataColumn(
+              label: const Text('Name'),
+              onSort: (columnIndex, ascending) => _onSort(1, ascending),
+            ),
+            DataColumn(
+              label: const Text('Email'),
+              onSort: (columnIndex, ascending) => _onSort(2, ascending),
+            ),
+            DataColumn(
+              label: const Text('Phone'),
+              onSort: (columnIndex, ascending) => _onSort(3, ascending),
+            ),
+            DataColumn(
+              label: const Text('Address'),
+              onSort: (columnIndex, ascending) => _onSort(4, ascending),
+            ),
+            DataColumn(
+              label: const Text('Company Type'),
+              onSort: (columnIndex, ascending) => _onSort(5, ascending),
+            ),
+            DataColumn(label: const Text('Actions')),
+          ],
+          rows: visibleCustomers.asMap().entries.map((entry) {
+            final int index = entry.key;
+            final Customer customer = entry.value;
+            final bool isSelected = _selectedCustomerIds.contains(customer.id);
 
-                                return DataRow(
-                                  selected: isSelected, 
-                            onSelectChanged: (selected) {
-  setState(() {
-    if (selected == true) {
-      _selectedCustomerIds
-        ..clear()
-        ..add(customer.id);
-    } else {
-      _selectedCustomerIds.remove(customer.id);
-    }
-  });
-},
-
-                                  cells: [
-                                    // DataCell for S.No
-                                    DataCell(Text('${startIndex + index + 1}')),
-                                    DataCell(Text(customer.name)),
-                                    DataCell(Text(customer.email ?? '-')),
-                                    DataCell(Text(customer.phone ?? '-')),
-                                    DataCell(
-  SizedBox(
-    width: 200, // Adjust this width as needed
-    child: Text(
-      customer.contactAddress.replaceAll('\n', ', '),
-      overflow: TextOverflow.ellipsis, // Optional: handle overflow with ellipsis
-      maxLines: 2, // Optional: limit the number of lines
+            return DataRow(
+              selected: isSelected,
+              onSelectChanged: (selected) {
+                setState(() {
+                  if (selected == true) {
+                    _selectedCustomerIds
+                      ..clear()
+                      ..add(customer.id);
+                  } else {
+                    _selectedCustomerIds.remove(customer.id);
+                  }
+                });
+              },
+              cells: [
+                DataCell(Text('${startIndex + index + 1}')),
+                DataCell(Text(customer.name)),
+                DataCell(Text(customer.email ?? '-')),
+                DataCell(Text(customer.phone ?? '-')),
+                DataCell(
+                  SizedBox(
+                    width: 200,
+                    child: Text(
+                      customer.contactAddress.replaceAll('\n', ', '),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 2,
+                    ),
+                  ),
+                ),
+                DataCell(Row(
+                  children: [
+                    Icon(
+                      customer.companyType == 'company' ? Icons.business : Icons.person,
+                      size: 18,
+                      color: customer.companyType == 'company' ? Colors.blue : Colors.green,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${customer.companyType[0].toUpperCase()}${customer.companyType.substring(1).toLowerCase()}',
+                      style: const TextStyle(fontFamily: 'Arial'),
+                    ),
+                  ],
+                )),
+                DataCell(Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit, color: Colors.blue),
+                      tooltip: 'Edit Customer',
+                      onPressed: () async {
+                        final updatedCustomer = await showDialog(
+                          context: context,
+                          builder: (_) => EditCustomerPage(customer: customer, posConfig: customer.posConfig),
+                        );
+                        if (updatedCustomer is Customer) {
+                          final idx = customers.indexWhere((c) => c.id == updatedCustomer.id);
+                          if (idx != -1) {
+                            setState(() {
+                              customers[idx] = updatedCustomer;
+                            });
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Customer "${updatedCustomer.name}" updated.'), backgroundColor: Colors.green),
+                            );
+                          }
+                        }
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      tooltip: 'Delete Customer',
+                      onPressed: () => _confirmDeleteCustomer(customer),
+                    ),
+                  ],
+                )),
+              ],
+            );
+          }).toList(),
+        ),
+      ),
     ),
   ),
 ),
-DataCell(Row(
-  children: [
-    Icon(
-      customer.companyType == 'company' ? Icons.business : Icons.person,
-      size: 18,
-      color: customer.companyType == 'company' ? Colors.blue : Colors.green,
-    ),
-    const SizedBox(width: 6),
-    Text(
-      '${customer.companyType[0].toUpperCase()}${customer.companyType.substring(1).toLowerCase()}',
-      style: const TextStyle(fontFamily: 'Arial'),
-    ),
-  ],
-)),
 
-                                    DataCell(
-                                      Row(
-                                        children: [
-                                          IconButton(
-                                            icon: const Icon(Icons.edit, color: Colors.blue),
-                                            tooltip: 'Edit Customer',
-                                           onPressed: () async {
-final updatedCustomer = await showDialog(
-  context: context,
-  builder: (_) => EditCustomerPage(customer: customer),
-);
-
-if (updatedCustomer is Customer) {
-  final index = customers.indexWhere((c) => c.id == updatedCustomer.id);
-  if (index != -1) {
-    setState(() {
-      customers[index] = updatedCustomer;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Customer "${updatedCustomer.name}" updated.'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-}
-
-}
-                                        
-                                         ),
-                                          IconButton(
-                                            icon: const Icon(Icons.delete, color: Colors.red),
-                                            tooltip: 'Delete Customer',
-                                            onPressed: () => _confirmDeleteCustomer(customer),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                );
-                              }).toList(),
-                            ),                        ),
-                        ),
-                      ),
-                    ),
                   // --- Pagination controls (Footer) ---
                   if (!isLoading && totalFilteredCustomers > 0)
                     _buildFooter(
@@ -800,6 +768,7 @@ if (updatedCustomer is Customer) {
               ),
             ),
     );
+  
   }
 
   Widget _buildFooter(int total, int start, int end, int totalPages) {
@@ -864,4 +833,84 @@ if (updatedCustomer is Customer) {
       ),
     );
   }
+   Widget _buildCompanyFilterDropdown() {
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.white, width: 0.8),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _companyFilter,
+          dropdownColor: Colors.white,
+          icon: const Icon(Icons.arrow_drop_down, color: Colors.white, size: 24),
+          selectedItemBuilder: (BuildContext context) {
+            return <String>['all', 'person', 'company'].map<Widget>((String itemValue) {
+              return Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  itemValue.toUpperCase(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontFamily: 'Arial',
+                    fontSize: 14,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              );
+            }).toList();
+          },
+          items: const [
+            DropdownMenuItem(value: 'all', child: Text('All', style: TextStyle(color: Colors.black, fontFamily: 'Arial'))),
+            DropdownMenuItem(value: 'person', child: Text('Person', style: TextStyle(color: Colors.black, fontFamily: 'Arial'))),
+            DropdownMenuItem(value: 'company', child: Text('Company', style: TextStyle(color: Colors.black, fontFamily: 'Arial'))),
+          ],
+          onChanged: (value) {
+            if (value != null) {
+              setState(() {
+                _companyFilter = value;
+                currentPage = 0;
+                _selectedCustomerIds.clear();
+              });
+            }
+          },
+        ),
+      ),
+    );
+  }
+Widget _buildCreditCustomersButton() {
+    return ElevatedButton.icon(
+      onPressed: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const CreditCustomersPage()),
+        );
+      },
+      style: ElevatedButton.styleFrom(
+        foregroundColor: Colors.black, // Text/icon color
+        backgroundColor: Colors.white, // Match dropdown background
+        elevation: 0,
+        side: const BorderSide(color: Colors.grey), // Match dropdown border
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(6), // Slight curve like dropdown
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 10),
+        minimumSize: const Size(180, 48), // Match dropdown height
+      ),
+      icon: const Icon(Icons.credit_score, size: 20, color: Color.fromARGB(255, 4, 83, 63)),
+      label: const Text(
+        'Credit Customers',
+        style: TextStyle(
+          color: Color.fromARGB(255, 4, 83, 63),
+          fontSize: 15,
+          fontWeight: FontWeight.bold,
+          fontFamily: 'Arial',
+        ),
+      ),
+    );
+  }
+
+
 }

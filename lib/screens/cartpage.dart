@@ -4,8 +4,11 @@ import 'package:rcspos/screens/customerpage.dart';
 import 'package:rcspos/screens/paymentpage.dart';
 
 class CartPage extends StatefulWidget {
+  final int productId;
+  final String shopCode;
   final List<Map<String, dynamic>> cart;
-
+  final bool sessionState; 
+  final int posId;
   final bool showAppBar;
   final String? customerName;
   final Map<String, dynamic> posConfig;  // ✅ new
@@ -14,8 +17,11 @@ class CartPage extends StatefulWidget {
   const CartPage({
     super.key, 
     required this.cart,
+    required this.productId,
+    required this.shopCode,
     this.customerName, 
-   
+     required this.posId, 
+     required this.sessionState,
     required this.posConfig, 
     
     this.showAppBar = true});
@@ -177,7 +183,11 @@ void applyValueToItem() {
 void onCustomerPressed() async {
   final result = await Navigator.push(
     context,
-    MaterialPageRoute(builder: (context) => CustomerPage()),
+    MaterialPageRoute(builder: (context) => CustomerPage(
+     
+      posId: widget.posId,
+      sessionState: widget.sessionState,
+    )),
   );
 
   if (result != null && result is Map<String, dynamic>) {
@@ -238,14 +248,16 @@ void onPaymentPressed() {
     0.0,
     (sum, item) => sum + item['list_price'] * item['quantity'],
   );
-
+ print("product Id: ${widget.productId}");
 Navigator.push(
   context,
   MaterialPageRoute(
     builder: (context) => PaymentPage(
+      shopCode: widget.shopCode,
+      productId: widget.productId,
       cart: widget.cart,
-   
-     
+      posId: widget.posId,
+      sessionState: widget.sessionState,
       posConfig: widget.posConfig,
       totalAmount: total,
       customerName: _customerName,       // From your state
@@ -347,18 +359,50 @@ for (var item in widget.cart) {
 
     return Scaffold(
      
+      appBar: MediaQuery.of(context).size.width < 600
+      ? AppBar(
+          title: const Text(
+            'Cart Items',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w500,
+              fontSize: 18,
+            ),
+          ),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back,color: Colors.white,),
+            onPressed: () {
+              Navigator.pop(context);
+            },
+          ),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          automaticallyImplyLeading: false,
+            flexibleSpace: Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color.fromARGB(255, 44, 145, 113), Color(0xFF185A9D)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      ),
+        )
+      : null,
       body: Column(
         children: [
 
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: const Color.fromARGB(255, 5, 146, 165),
+            color: const Color.fromARGB(255, 1, 13, 122),
             child: Row(
               children: const [
                 Expanded(flex: 4, child: Text('ITEM NAME', style: TextStyle(fontWeight: FontWeight.bold,color: Colors.white))),
                 Expanded(flex: 2, child: Text('QTY', style: TextStyle(fontWeight: FontWeight.bold,color: Colors.white))),
                 Expanded(flex: 2, child: Text('PRICE', style: TextStyle(fontWeight: FontWeight.bold,color: Colors.white))),
                 Expanded(flex: 2, child: Text('TOTAL', style: TextStyle(fontWeight: FontWeight.bold,color: Colors.white))),
+                
+                
               ],
             ),
           ),
@@ -370,7 +414,6 @@ Expanded(
     itemBuilder: (context, index) {
       final reversedIndex = widget.cart.length - 1 - index;
       final item = widget.cart[reversedIndex];
-
       final isSelected = reversedIndex == selectedIndex;
 
       return GestureDetector(
@@ -380,39 +423,47 @@ Expanded(
           editingField = '';
         }),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          color: isSelected ? Colors.tealAccent.withOpacity(0.2) : null,
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: Colors.grey.shade400, width: 0.8),
+            ),
+            color: isSelected ? Colors.tealAccent.withOpacity(0.2) : Colors.white,
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 3),
           child: Row(
             children: [
-              Expanded(
-                flex: 4,
-                child: Text(
-                  item['display_name'] ?? '',
-                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, fontFamily: "Arial"),
-                ),
-              ),
-              Expanded(
+             _buildTableCell(
+  item['display_name'] ?? '',
+  flex: 4,
+  style: const TextStyle(
+    fontSize: 17.5,
+    color: Color.fromARGB(255, 1, 104, 5),
+    fontWeight: FontWeight.w600,
+    fontFamily: "Arial",
+  ),
+),
+              _buildTableCell('${item['quantity']}', flex: 2,style: const TextStyle(
+    fontSize: 14,
+    fontWeight: FontWeight.w600,
+    fontFamily: "Arial",
+  ),),
+              _buildTableCell(
+                '₹${(item['list_price'] as num? ?? 0.0).toStringAsFixed(2)}',
                 flex: 2,
-                child: Text(
-                  '${item['quantity']}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, fontFamily: "Arial"),
-                ),
+                style: const TextStyle(
+    fontSize: 15,
+    fontWeight: FontWeight.w600,
+    fontFamily: "Arial",
+  )
               ),
-              Expanded(
+              _buildTableCell(
+                '₹${((item['quantity'] as num? ?? 0.0) * (item['list_price'] as num? ?? 0.0)).toStringAsFixed(2)}',
                 flex: 2,
-                child: Text(
-                  '₹${(item['list_price'] as num? ?? 0.0).toStringAsFixed(2)}',
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, fontFamily: "Arial"),
-                ),
-              ),
-              Expanded(
-                flex: 2,
-                child: Text(
-                  '₹${((item['quantity'] as num? ?? 0.0) * (item['list_price'] as num? ?? 0.0)).toStringAsFixed(2)}',
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, fontFamily: "Arial"),
-                ),
+                style: const TextStyle(
+    fontSize: 16,
+    fontWeight: FontWeight.w600,
+    fontFamily: "Arial",
+  )
               ),
             ],
           ),
@@ -420,8 +471,7 @@ Expanded(
       );
     },
   ),
-) ,  // Total (UNCHANGED)
-
+),
 LayoutBuilder(
   builder: (context, constraints) {
     bool isMobile = constraints.maxWidth < 600;
@@ -679,34 +729,86 @@ Expanded(
     );
   }
 
-  Widget _buildDesktopTotalSection(double total, double totalWithGst) {
+ Widget _buildDesktopTotalSection(double total, double totalWithGst) {
   return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
     color: const Color.fromARGB(255, 1, 67, 121),
     child: Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Text('SubTotal:', style: TextStyle(fontSize: 17, color: Colors.white, fontFamily: "Arial")),
-                const SizedBox(width: 8),
-                Text('₹${total.toStringAsFixed(2)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white, fontFamily: "Arial")),
-              ],
-            ),
-            Row(
-              children: [
-                const Text('Tax (GST):', style: TextStyle(fontSize: 14, color: Colors.white, fontFamily: "Arial")),
-                const SizedBox(width: 8),
-                Text('₹${widget.cart.fold(0.0, (sum, item) => sum + (item['gst'] ?? 0.0)).toStringAsFixed(2)}',
-                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white, fontFamily: "Arial")),
-              ],
-            ),
-          ],
+Column(
+  crossAxisAlignment: CrossAxisAlignment.start,
+  children: [
+     Row(
+      children: [
+        const Text(
+          'Total Items:',
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.white,
+            fontFamily: "Arial",
+          ),
         ),
+        const SizedBox(width: 8),
+         Text(
+          '${widget.cart.length}',
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+      ],
+    ),
+    Row(
+      children: [
+        
+        const Text(
+          'SubTotal:',
+          style: TextStyle(
+            fontSize: 17,
+            color: Colors.white,
+            fontFamily: "Arial",
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '₹${total.toStringAsFixed(2)}',
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+            fontFamily: "Arial",
+          ),
+        ),
+      ],
+    ),
+    const SizedBox(height: 4),
+    Row(
+      children: [
+        const Text(
+          'Tax (GST):',
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.white,
+            fontFamily: "Arial",
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '₹${widget.cart.fold(0.0, (sum, item) => sum + (item['gst'] ?? 0.0)).toStringAsFixed(2)}',
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+            fontFamily: "Arial",
+          ),
+        ),
+      ],
+    ),
+  ],
+),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
@@ -736,11 +838,19 @@ Expanded(
 Widget _buildMobileTotalSection(double total, double totalWithGst) {
   return Container(
     width: double.infinity,
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
     color: const Color.fromARGB(255, 1, 67, 121),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+         Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('Total Items:', style: TextStyle(fontSize: 15, color: Colors.white, fontFamily: "Arial")),
+            Text('${widget.cart.length}',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white, fontFamily: "Arial")),
+          ],
+        ),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -748,7 +858,7 @@ Widget _buildMobileTotalSection(double total, double totalWithGst) {
             Text('₹${total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white, fontFamily: "Arial")),
           ],
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 0),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -757,10 +867,10 @@ Widget _buildMobileTotalSection(double total, double totalWithGst) {
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white, fontFamily: "Arial")),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 2),
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
             color: const Color(0xFFEAF7FF),
             border: Border.all(color: const Color.fromARGB(255, 4, 111, 160)),
@@ -847,6 +957,32 @@ final TextStyle commonTextStyle = TextStyle(
                 )
               : Text(label, style: commonTextStyle),
         ),
+      ),
+    ),
+  );
+}
+Widget _buildTableCell(
+  String text, {
+  required int flex,
+  TextStyle? style,
+}) {
+  return Expanded(
+    flex: flex,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        border: Border(
+          right: BorderSide(color: Colors.grey.shade300, width: 0.5),
+        ),
+      ),
+      child: Text(
+        text,
+        style: style ??
+            const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              fontFamily: "Arial",
+            ),
       ),
     ),
   );

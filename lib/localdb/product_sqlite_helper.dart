@@ -42,7 +42,9 @@ class ProductSQLiteHelper {
       'SELECT qty_available FROM products WHERE id = ?',
       [productId],
     );
-    return result.isNotEmpty ? result.first['qty_available'] as double : 0.0;
+    return result.isNotEmpty
+        ? (result.first['qty_available'] as num).toDouble()
+        : 0.0;
   }
 
   Future<void> updateStockAfterOrder(List<Map<String, dynamic>> cartItems) async {
@@ -53,11 +55,14 @@ class ProductSQLiteHelper {
         final int productId = item['id'];
         final double qtySold = (item['quantity'] ?? 0).toDouble();
 
-        _db!.execute('''
+        _db!.execute(
+          '''
           UPDATE products
           SET qty_available = qty_available - ?
           WHERE id = ?;
-        ''', [qtySold, productId]);
+          ''',
+          [qtySold, productId],
+        );
       }
       _db!.execute('COMMIT;');
     } catch (e) {
@@ -73,70 +78,62 @@ class ProductSQLiteHelper {
       [categoryId],
     );
 
-    return result.map((row) => {
-      'id': row['id'],
-      'display_name': row['display_name'],
-      'list_price': row['list_price'],
-      'qty_available': row['qty_available'],
-      'default_code': row['default_code'],
-      'categ_id': {
-        'id': row['category_id'],
-        'name': row['category_name'],
-      },
-      'taxes_id': row['tax_id'] != null
-          ? [
-              {
-                'id': row['tax_id'],
-                'name': row['tax_name'],
-              }
-            ]
-          : [],
-      'synced_at': row['synced_at'],
-    }).toList();
+    return result.map((row) => _mapRowToProduct(row)).toList();
   }
-Future<void> insertProducts(List<Map<String, dynamic>> products) async {
-  await _ensureDbInitialized();
-  final db = _db!;
 
-  for (var product in products) {
-    final id = product['id'];
+  Future<void> insertProducts(List<Map<String, dynamic>> products) async {
+    await _ensureDbInitialized();
+    final db = _db!;
 
-    // 🔍 Check if the product exists already
-    final existing = db.select('SELECT qty_available FROM products WHERE id = ?', [id]);
+    for (var product in products) {
+      final id = product['id'];
 
-    double qtyToInsert = product['qty_available']?.toDouble() ?? 0.0;
+      final existing = db.select('SELECT qty_available FROM products WHERE id = ?', [id]);
+      double qtyToInsert = (product['qty_available'] ?? 0).toDouble();
 
-    if (existing.isNotEmpty) {
-      final localQty = existing.first['qty_available'];
-      // 👇 Optionally preserve local stock instead of server stock
-      qtyToInsert = localQty is double ? localQty : (localQty as num).toDouble();
+      if (existing.isNotEmpty) {
+        final localQty = existing.first['qty_available'];
+        qtyToInsert = (localQty is num) ? localQty.toDouble() : 0.0;
+      }
+
+final categList = product['pos_categ_ids'];
+final category = (categList is List && categList.isNotEmpty && categList[0] is Map)
+    ? categList[0] as Map<String, dynamic>
+    : {'id': null, 'name': 'No Category'};
+
+final taxList = product['taxes_id'];
+final tax = (taxList is List && taxList.isNotEmpty && taxList[0] is Map)
+    ? taxList[0] as Map<String, dynamic>
+    : {'id': null, 'name': null};
+
+db.execute('''
+  INSERT OR REPLACE INTO products (
+    id, display_name, list_price, qty_available, default_code,
+    category_id, category_name, tax_id, tax_name, synced_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+''', [
+  id,
+  product['display_name'] ?? 'Unnamed',
+  product['list_price'],
+  qtyToInsert,
+  product['default_code'] ?? '',
+  category['id'],
+  category['name'],
+  tax['id'],
+  tax['name'],
+]);
+
     }
-
-    // 👇 Insert or replace, but with adjusted qty
-    db.execute('''
-      INSERT OR REPLACE INTO products (
-        id, display_name, list_price, qty_available, default_code,
-        category_id, category_name, tax_id, tax_name, synced_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    ''', [
-      id,
-      product['display_name'],
-      product['list_price'],
-      qtyToInsert,
-      product['default_code'],
-      product['categ_id']?['id'],
-      product['categ_id']?['name'],
-      product['taxes_id'] is List && product['taxes_id'].isNotEmpty ? product['taxes_id'][0]['id'] : null,
-      product['taxes_id'] is List && product['taxes_id'].isNotEmpty ? product['taxes_id'][0]['name'] : null,
-    ]);
   }
-}
 
   Future<List<Map<String, dynamic>>> fetchProducts() async {
     await _ensureDbInitialized();
     final result = _db!.select('SELECT * FROM products');
+    return result.map((row) => _mapRowToProduct(row)).toList();
+  }
 
-    return result.map((row) => {
+  Map<String, dynamic> _mapRowToProduct(Row row) {
+    return {
       'id': row['id'],
       'display_name': row['display_name'],
       'list_price': row['list_price'],
@@ -148,40 +145,44 @@ Future<void> insertProducts(List<Map<String, dynamic>> products) async {
       },
       'taxes_id': row['tax_id'] != null
           ? [
-              {
-                'id': row['tax_id'],
-                'name': row['tax_name'],
-              }
+              {'id': row['tax_id'], 'name': row['tax_name']}
             ]
           : [],
       'synced_at': row['synced_at'],
-    }).toList();
+    };
   }
 
-  Future<void> debugPrintAllProducts() async {
-    await _ensureDbInitialized();
-    final result = _db!.select('SELECT * FROM products');
+Future<void> debugPrintAllProducts() async {
+  await _ensureDbInitialized();
+  final result = _db!.select('SELECT * FROM products');
 
-    if (result.isEmpty) {
-      print('❌ No product data found in SQLite.');
-      return;
-    }
-
-    print('📦 SQLite3 Product Data (Formatted Table):');
-    print('| ID  | Name                 | Price     | Category ID | Tax ID | Synced At            |');
-    print('|-----|----------------------|-----------|-------------|--------|-----------------------|');
-
-    for (final row in result) {
-      final id = row['id'];
-      final name = (row['display_name'] ?? '').toString().padRight(20).substring(0, 20);
-      final price = (row['list_price']?.toString() ?? '0.00').padRight(9);
-      final categoryId = row['category_id']?.toString().padRight(11) ?? '';
-      final taxId = row['tax_id']?.toString().padRight(6) ?? '';
-      final syncedAt = (row['synced_at'] ?? '').toString().padRight(21).substring(0, 21);
-
-      print('| ${id.toString().padRight(4)} | $name | $price | $categoryId | $taxId | $syncedAt |');
-    }
+  if (result.isEmpty) {
+    print('❌ No product data found in SQLite.');
+    return;
   }
+
+  print('📦 SQLite3 Product Data (Formatted Table):');
+  print('| ID  | Name                 | Price     | Category ID | Category Name      | Tax ID | Synced At            |');
+  print('|-----|----------------------|-----------|-------------|---------------------|--------|-----------------------|');
+
+  for (final row in result) {
+    final id = row['id'];
+    final name = (row['display_name'] ?? '').toString().padRight(22).substring(0, 22);
+    final price = (row['list_price']?.toString() ?? '0.00').padRight(9);
+    final categoryId = row['category_id']?.toString().padRight(11) ?? '';
+    final categoryName = (row['category_name'] ?? '').toString().padRight(19).substring(0, 19);
+    final taxId = row['tax_id']?.toString().padRight(6) ?? '';
+    final syncedAt = (row['synced_at'] ?? '').toString().padRight(21).substring(0, 21);
+
+    print('| ${id.toString().padRight(4)} | $name | $price | $categoryId | $categoryName | $taxId | $syncedAt |');
+  }
+}
+
+Future<void> clearProducts() async {
+  await _ensureDbInitialized();
+  _db!.execute('DELETE FROM products;');
+  print('✅ Old product data cleared successfully.');
+}
 
   void close() {
     _db?.dispose();

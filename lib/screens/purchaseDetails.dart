@@ -65,26 +65,97 @@ class _PurchaseDetailsPageState extends State<PurchaseDetailsPage> {
 
     if (purchase == null) {
       return Scaffold(
-        appBar: AppBar(
-          title: const Text(
-            "Purchase Details",
-            style: TextStyle(color: Colors.white),
-          ),
-          backgroundColor: const Color.fromARGB(255, 1, 139, 82),
-          iconTheme: const IconThemeData(color: Colors.white),
+      appBar:  AppBar(
+         backgroundColor: Colors.transparent,
+          elevation: 0,
+          automaticallyImplyLeading: false,
+            flexibleSpace: Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color.fromARGB(255, 44, 145, 113), Color(0xFF185A9D)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        body: const Center(child: Text("No details found for this order.")),
+      ),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(5),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                   
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      const Text(
+                        'Order Details',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontFamily: 'Arial',
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                   ],
+                  ),
+                  const SizedBox(height: 4),
+               ],
+              ),
+            ),
+          ),
+        ),
+      ),
+  
+       body: const Center(child: Text("No details found for this order.")),
       );
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          "Purchase Details",
-          style: TextStyle(color: Colors.white),
+      appBar:  AppBar(
+         backgroundColor: Colors.transparent,
+          elevation: 0,
+          automaticallyImplyLeading: false,
+            flexibleSpace: Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color.fromARGB(255, 44, 145, 113), Color(0xFF185A9D)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        backgroundColor: const Color.fromARGB(255, 1, 139, 82),
-        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(5),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                   
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      const Text(
+                        'Order Details',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontFamily: 'Arial',
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                   ],
+                  ),
+                  const SizedBox(height: 4),
+               ],
+              ),
+            ),
+          ),
+        ),
       ),
       body: SafeArea(
         child: ListView(
@@ -106,15 +177,15 @@ class _PurchaseDetailsPageState extends State<PurchaseDetailsPage> {
                       const SizedBox(height: 12),
                       Row(
                         children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text("Purchase ID:", style: labelStyle),
-                                Text(purchase!['purchase_id'] ?? '--', style: valueStyle),
-                              ],
-                            ),
-                          ),
+                          // Expanded(
+                          //   child: Column(
+                          //     crossAxisAlignment: CrossAxisAlignment.start,
+                          //     children: [
+                          //       Text("Purchase ID:", style: labelStyle),
+                          //       Text(purchase!['purchase_id'] ?? '--', style: valueStyle),
+                          //     ],
+                          //   ),
+                          // ),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -124,12 +195,7 @@ class _PurchaseDetailsPageState extends State<PurchaseDetailsPage> {
                               ],
                             ),
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
+                                                    Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -160,7 +226,13 @@ class _PurchaseDetailsPageState extends State<PurchaseDetailsPage> {
                               ],
                             ),
                           ),
+ 
                         ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                       ],
                       ),
                       const Divider(height: 28),
                         Text("Customer Information", style: sectionStyle),
@@ -184,24 +256,7 @@ class _PurchaseDetailsPageState extends State<PurchaseDetailsPage> {
                           ),
                         ],
                       ),
-                      Text("Supplier Information", style: sectionStyle),
-                      const SizedBox(height: 8),
-                    
-                      ListTile(
-                        leading: const Icon(Icons.store, color: Colors.deepPurple),
-                        title: Text(purchase!['pos_config_name'] ?? "",
-                            style: valueStyle.copyWith(color: Colors.deepPurple[800])),
-                        subtitle: Text(purchase!['pos_config_address'] ?? ""),
-                        trailing: Text(purchase!['pos_config_phone'] ?? "", style: valueStyle),
-                        dense: true,
-                      ),
-                      const SizedBox(height: 8),
-                      ListTile(
-                        leading: const Icon(Icons.person_outline, color: Colors.grey),
-                        title: Text(purchase!['recorded_by'] ?? "–", style: valueStyle),
-                        subtitle: const Text("Recorded by"),
-                        dense: true,
-                      ),
+                     
                     ],
                   ),
                 ),

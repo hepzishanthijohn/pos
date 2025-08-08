@@ -10,9 +10,19 @@ import 'dart:ui';
 // const imagebaseurl = "http://10.42.0.1:8069";
 // const DB = "zigmapos";
 
+// const baseurl = "http://10.10.192.82:8069/";
+// const imagebaseurl = "http://10.10.192.82:8069";
+// const DB = "zigmapos";
+
 const baseurl = "http://10.10.192.82:8069/";
 const imagebaseurl = "http://10.10.192.82:8069";
-const DB = "zigmapos";
+const DB = "newposdb";
+
+
+
+// const baseurl = "http://10.10.192.123:8069/";
+// const imagebaseurl = "http://10.10.192.123:8069";
+// const DB = "pos";
 
 // const baseurl = "http://10.10.192.150:8069/";
 // const imagebaseurl = "http://10.10.192.150:8069";

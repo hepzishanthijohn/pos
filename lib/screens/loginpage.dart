@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
 import 'package:awesome_snackbar_content/awesome_snackbar_content.dart';
+import 'package:rcspos/components/snackbar_helper.dart';
 import 'package:rcspos/screens/posconfigpage.dart';
 import 'package:rcspos/utils/urls.dart';
 
@@ -57,8 +58,9 @@ Widget build(BuildContext context) {
           Text(
             "RCS POS", // You can keep a smaller text title if desired
             textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith( // Smaller headline for a subtitle
-                  color: const Color.fromARGB(255, 0, 124, 73),
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith( 
+              // Smaller headline for a subtitle
+                  color: Color.fromARGB(255, 44, 145, 113),
                   fontWeight: FontWeight.bold,
                   // You can still apply Arial if loaded, e.g., fontFamily: 'Arial'
                   fontSize: 22, // Adjusted font size
@@ -123,21 +125,6 @@ class __FormContentState extends State<_FormContent> {
     }
   }
 
-  void _showSnackBar(String title, String message, ContentType type) {
-    final snackBar = SnackBar(
-      elevation: 0,
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: Colors.transparent,
-      content: AwesomeSnackbarContent(
-        title: title,
-        message: message,
-        contentType: type,
-      ),
-    );
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(snackBar);
-  }
 
  void _handleLogin() async {
   final box = await Hive.openBox("login");
@@ -170,6 +157,13 @@ class __FormContentState extends State<_FormContent> {
             '';
         await box.put("session_id", session);
         await box.put("userinfo", data['result']);
+showCustomSnackBar(
+  context: context,
+  title: "Login Successful!",
+  message: "Welcome",
+  backgroundColor: Colors.green,
+  icon: Icons.check_circle,
+);
 
         if (_rememberMe) {
           await box.put("credentials", {
@@ -180,8 +174,16 @@ class __FormContentState extends State<_FormContent> {
         } else {
           await box.delete("credentials");
         }
+showCustomSnackBar(
+  context: context,
+  title: "Login Successful!",
+  message: "Welcome",
+  backgroundColor: Colors.green,
+  icon: Icons.check_circle,
+);
 
-        _showSnackBar("Login Successful!", "Welcome", ContentType.success);
+
+
 
 Navigator.pushReplacement(
   context,
@@ -190,10 +192,17 @@ Navigator.pushReplacement(
 
 
       } else {
-        _showSnackBar("Login Failed", "Invalid credentials", ContentType.failure);
-      }
+ showCustomSnackBar(
+  context: context,
+  title: "Login Failed",
+  message: "Invalid credentials",
+  backgroundColor: Colors.red,
+  icon: Icons.error,
+);
+     }
     } else {
-      _showSnackBar("Server Error", "Please try again later", ContentType.failure);
+     showCustomSnackBar(context: context,
+  title:"Offline Mode",  message:"You're logged in as offline user", backgroundColor: Colors.orange,icon: Icons.wifi_off);
     }
   } catch (e) {
     // 🔌 Offline fallback logic
@@ -207,11 +216,15 @@ Navigator.pushReplacement(
         "offline": true,
       });
 
-      _showSnackBar(
-        "Offline Mode",
-        "You're currently logged in as an offline user",
-        ContentType.warning,
-      );
+showCustomSnackBar(
+  context: context,
+  title: "Offline Mode",
+  message:"You're currently logged in as an offline user",
+  backgroundColor:Colors.orange, // background color
+ icon:  Icons.wifi_off, // icon
+);
+
+
 
 Navigator.pushReplacement(
   context,
@@ -219,7 +232,14 @@ Navigator.pushReplacement(
 );
 
    } else {
-      _showSnackBar("Offline Login Failed", "No saved credentials found", ContentType.failure);
+     showCustomSnackBar(
+      context: context,
+ title:  "Offline Login Failed",
+  message:  "No saved credentials found",
+ backgroundColor:  Colors.red,          // Use red for failure
+  icon:Icons.error_outline, // Use an error icon
+);
+
     }
   } finally {
     setState(() => _isVerifying = false);
@@ -270,7 +290,7 @@ Navigator.pushReplacement(
               ),
             ),
             controlAffinity: ListTileControlAffinity.leading,
-            activeColor: const Color.fromARGB(255, 0, 124, 73),
+            activeColor: Color.fromARGB(255, 49, 163, 127),
             checkColor: Colors.white,
           ),
           const SizedBox(height: 16),

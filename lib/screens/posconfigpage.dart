@@ -5,26 +5,28 @@ import 'dart:io'; // For HttpHeaders
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
-import 'package:rcspos/screens/home.dart'; // Make sure this path is correct
+import 'package:rcspos/components/snackbar_helper.dart';
+import 'package:rcspos/localdb/CreditCustomerSQLiteHelper.dart';
+import 'package:rcspos/localdb/posconfigsqlitehelper.dart';
+import 'package:rcspos/localdb/product_sqlite_helper.dart';
+import 'package:rcspos/localdb/purchaseDbHelper.dart';
+import 'package:rcspos/screens/CreditCustomersPage.dart';
+import 'package:rcspos/screens/home.dart';
 import 'package:rcspos/screens/loginpage.dart';
-import 'package:rcspos/localdb/sqlite_helper.dart';
-import 'package:rcspos/utils/urls.dart'; // Make sure baseurl is correctly defined here
-import 'package:awesome_snackbar_content/awesome_snackbar_content.dart';
+import 'package:rcspos/screens/open_session_dialog.dart';
+import 'package:rcspos/screens/orderslistpage.dart';
+import 'package:rcspos/screens/productpage.dart';
+import 'package:rcspos/screens/productstablepage.dart';
+import 'package:rcspos/screens/purchaseDetails.dart';
+import 'package:rcspos/utils/urls.dart';
 
 
 class POSConfigPage extends StatefulWidget {
-  
 
-
-   
-
-    const POSConfigPage({ 
+  const POSConfigPage({
     super.key,
-
-
-
-
-  });
+ 
+    });
 
   @override
   State<POSConfigPage> createState() => _POSConfigPageState();
@@ -32,54 +34,36 @@ class POSConfigPage extends StatefulWidget {
 
 class _POSConfigPageState extends State<POSConfigPage> {
   bool _loading = true;
+  int totalProducts = 0;
+  int totalCreditCustomers = 0;
+  int totalSalesCount = 0;
   List<Map<String, dynamic>> _configs = [];
-  String? _errorMessage; // Added for specific error messages
+  String? _errorMessage;
 
   final String apiUrl =
-      '$baseurl/api/pos.config/?query={id,name,shop_phone_no,shop_addrs,last_session_closing_cash,last_session_closing_date,current_session_state,shop_gst_no,shop_phone_no,shop_owner_id{id,name}}';
+      '$baseurl/api/pos.config/?query={id,name,shop_addrs,shop_gst_no,shop_phone_no,shop_code,shop_admin_ids{id,name},last_session_closing_date,current_session_state}';
 
   @override
   void initState() {
     super.initState();
     fetchPOSConfigs();
+    loadSummaryCounts();
   }
+Future<void> loadSummaryCounts() async {
+  final products = await ProductSQLiteHelper().fetchProducts();
+  final credits = await CreditDbHelperRawSqlite().getCustomers();
 
-  // --- Helper for Date Formatting ---
-  String _formatDate(String value) {
-    try {
-      final date = DateTime.tryParse(value);
-      if (date != null) {
-        return '${date.day.toString().padLeft(2, '0')}-${date.month.toString().padLeft(2, '0')}-${date.year}';
-      }
-    } catch (_) {
-      // Handle parsing errors gracefully
-    }
-    return 'N/A';
-  }
+  // Assuming getCustomers() returns List or count, adjust if needed
+  final purchases = await PurchaseDBHelper().getTodaysPurchases(); // Or getTodaysPurchases() depending on your need
 
-  Future<List<Map<String, dynamic>>?> _loadPOSConfigsOffline() async {
-    final sqlite = SQLiteHelper();
-    final configs = sqlite.fetchConfigs();
-    return configs;
-  }
+  setState(() {
+    totalProducts = products.length;
+    totalCreditCustomers = credits.length;
+    totalSalesCount = purchases.length;  // Or .length if list, or adapt accordingly
+  });
+}
 
-  void _showSnackBar(String title, String message, ContentType type) {
-    final snackBar = SnackBar(
-      elevation: 0,
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: Colors.transparent,
-      content: AwesomeSnackbarContent(
-        title: title,
-        message: message,
-        contentType: type,
-      ),
-    );
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(snackBar);
-  }
 
-  // --- API Call to Fetch POS Configurations ---
   Future<void> fetchPOSConfigs() async {
     setState(() {
       _loading = true;
@@ -87,15 +71,19 @@ class _POSConfigPageState extends State<POSConfigPage> {
     });
 
     final box = await Hive.openBox('login');
+    final sqlite = posConfigSQLiteHelper.instance;
 
     try {
       final rawSession = box.get('session_id');
-      if (rawSession == null) {
+
+      if (rawSession == null || (rawSession as String).trim().isEmpty) {
         showError('Session ID not found. Please login again.');
         return;
       }
 
-      final sessionId = rawSession.contains('session_id=') ? rawSession : 'session_id=$rawSession';
+      final sessionId = rawSession.startsWith('session_id=')
+          ? rawSession
+          : 'session_id=$rawSession';
 
       final response = await http.get(
         Uri.parse(apiUrl),
@@ -109,86 +97,96 @@ class _POSConfigPageState extends State<POSConfigPage> {
         final data = jsonDecode(response.body);
         final List configsRaw = data['result'] ?? [];
 
+        if (configsRaw.isEmpty) {
+          showError("No POS configurations found in the API response.");
+          setState(() => _configs = []);
+          return;
+        }
+
         final List<Map<String, dynamic>> parsedConfigs =
             configsRaw.map((e) => Map<String, dynamic>.from(e)).toList();
 
-        final sqlite = SQLiteHelper();
-        await sqlite.init();
         await sqlite.insertConfigs(parsedConfigs);
-
-        // ✅ Debug print here for sqlite pos_configs contents
-        // sqlite.debugPrintAllConfigs();
-
-        sqlite.close();
+        final updatedConfigs = await sqlite.getAllConfigs();
 
         setState(() {
-          _configs = parsedConfigs;
+          _configs = updatedConfigs;
         });
-
-        // _showSnackBar("POS Config Loaded", "Fetched from server", ContentType.success);
       } else {
         final error = jsonDecode(response.body);
-        final msg = error['error']['data']['message'] ?? response.body;
-        showError("Failed to fetch POS configs: ${response.statusCode} - $msg");
+        final msg = error['error']?['data']?['message'] ?? response.body;
+        showError("API Error: ${response.statusCode} - $msg");
+
+        final offlineData = await sqlite.getAllConfigs();
+        if (offlineData.isNotEmpty) {
+          setState(() => _configs = offlineData);
+          showCustomSnackBar(
+            context: context,
+            title: "Using Offline Data",
+            message: "Showing cached POS configurations.",
+            backgroundColor: Colors.orange,
+            icon: Icons.cloud_off,
+          );
+        } else {
+          setState(() => _configs = []);
+          showError("No offline POS configs available.");
+        }
       }
     } catch (e, stackTrace) {
-      print("Fetch error: $e\n$stackTrace");
+      debugPrint("❌ Exception during fetch: $e\n$stackTrace");
 
-      final sqlite = SQLiteHelper();
-      await sqlite.init();
-      final offlineData = sqlite.fetchConfigs();
-      sqlite.close();
-
+      final offlineData = await sqlite.getAllConfigs();
       if (offlineData.isNotEmpty) {
-        setState(() {
-          _configs = offlineData;
-        });
-
-        _showSnackBar(
-          "Offline Mode",
-          "You're currently viewing offline POS data",
-          ContentType.warning,
+        setState(() => _configs = offlineData);
+        showCustomSnackBar(
+          context: context,
+          title: "Offline Mode",
+          message: "API failed. Loaded local POS configs.",
+          backgroundColor: Colors.orange,
+          icon: Icons.wifi_off,
         );
       } else {
-        setState(() {
-          _configs = [];
-        });
-
-        _showSnackBar(
-          "Offline Fetch Failed",
-          "No offline POS configs available",
-          ContentType.failure,
-        );
+        setState(() => _configs = []);
+        showError("No offline POS configs available.");
       }
     } finally {
       setState(() => _loading = false);
     }
   }
 
-  // --- Error Message Handler ---
   void showError(String message) {
     setState(() {
       _loading = false;
-      _errorMessage = message; // Store the error message
+      _errorMessage = message;
     });
-    // Also show a SnackBar for immediate feedback
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  // --- Status Color and Text Helpers ---
+  // NOTE: These helper methods are no longer needed for the new UI but are kept for reference.
   Color getStatusColor(dynamic status) {
-    if (status == 'opened') return Colors.green.shade600; // Slightly darker green
-    if (status == false || status == 'closed') return Colors.red.shade600; // Slightly darker red
-    return Colors.grey.shade600; // Consistent grey
+    if (status == true) return Colors.green.shade600;
+    if (status == false) return Colors.red.shade600;
+    return Colors.grey.shade600;
   }
 
   String getStatusText(dynamic status) {
-    if (status == 'opened') return 'In Progress';
-    if (status == false || status == 'closed') return 'Closed';
+    if (status == true) return 'In Progress';
+    if (status == false) return 'Closed';
     return 'Unknown';
   }
 
-  // --- UI Build Method ---
+  String _formatDate(String value) {
+    try {
+      final date = DateTime.tryParse(value);
+      if (date != null) {
+        return '${date.day.toString().padLeft(2, '0')}-${date.month.toString().padLeft(2, '0')}-${date.year}';
+      }
+    } catch (_) {
+      // Handle parsing errors gracefully
+    }
+    return 'N/A';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -201,92 +199,380 @@ class _POSConfigPageState extends State<POSConfigPage> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor: const Color.fromARGB(255, 1, 139, 82),
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color.fromARGB(255, 44, 145, 113), Color(0xFF185A9D)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
+        backgroundColor: Colors.transparent,
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
           IconButton(
             icon: const Icon(Icons.exit_to_app),
             tooltip: 'Logout',
             onPressed: () {
-             
               Navigator.pushAndRemoveUntil(
                 context,
-                MaterialPageRoute(builder: (context) => const Login()), // Removed posConfig
+                MaterialPageRoute(builder: (context) => const Login()),
                 (route) => false,
               );
-
-              
             },
           ),
         ],
       ),
-      backgroundColor: const Color(0xFFF7F4FB),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _errorMessage != null // Show error widget if there's an error
-              ? _buildErrorWidget()
-              : _configs.isEmpty
-                  ? _buildNoConfigsWidget() // Show no configs widget if list is empty
-                  : SingleChildScrollView(
-                      padding: const EdgeInsets.all(5),
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          int crossAxisCount = 1;
-                          // Increase childAspectRatio for mobile and tablets
-                          double childAspectRatio = 1.2; // Increased from 1.6
-                          if (constraints.maxWidth > 800) {
-                            crossAxisCount = 3;
-                            childAspectRatio = 1.3; // Can keep as is or adjust if needed
-                          } else if (constraints.maxWidth > 600) {
-                            crossAxisCount = 2;
-                            childAspectRatio = 1.5; // Increased from 1.4
-                          }
-
-                          return GridView.count(
-                            crossAxisCount: crossAxisCount,
-                            crossAxisSpacing: 16,
-                            mainAxisSpacing: 18,
-                            childAspectRatio: childAspectRatio,
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(), // Prevent GridView from scrolling independently
-                            children: _configs.map((config) {
-                              // Safely extract data, providing default values
-                              final String name = config['name'] ?? 'Unnamed POS';
-                              final String address = config['shop_addrs'] ?? 'Not set';
-                              final double cash = (config['last_session_closing_cash'] ?? 0.0).toDouble();
-                              final String shopGstNo = (config['shop_gst_no'] ?? 'Not set').toString();
-                              final String shopPhoneNo = config['shop_phone_no']?.toString() ?? '-';
-                              final String shopOwnerName = config['shop_owner_id']?['name'] ?? 'Unknown';
-                              final dynamic rawDate = config['last_session_closing_date'];
-                              final String date =
-                                  (rawDate == false || rawDate == null || rawDate.toString() == 'false')
-                                      ? 'N/A'
-                                      : _formatDate(rawDate.toString());
-                              final sessionState = config['current_session_state'];
-
-                              return _buildPOSConfigCard(
-                                name: name,
-                                address: address,
-                                cash: cash,
-                                shopGstNo: shopGstNo,
-                                shopPhoneNo: shopPhoneNo,
-                                shopOwnerName: shopOwnerName,
-                                date: date,
-                                sessionState: sessionState,
-                                // Pass the specific config map that was used to build this card
-                                // This is crucial for the onPressed action.
-                                specificConfig: config,
-                              );
-                            }).toList(),
-                          );
-                        },
+ body: Center(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Mobile view: No Card, with a smaller horizontal padding.
+          if (constraints.maxWidth < 800) {
+            return SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _errorMessage != null
+                        ? _buildErrorWidget()
+                        : _configs.isEmpty
+                            ? _buildNoConfigsWidget()
+                            : _buildProfileView(context),
+              ),
+            );
+          } else {
+            // Desktop/Tablet view: The Card widget wraps the content.
+            return Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Card(
+                color: Colors.white,
+                elevation: 8,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 1,
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          borderRadius: BorderRadius.only(
+                            topLeft: Radius.circular(16),
+                            bottomLeft: Radius.circular(16),
+                          ),
+                          image: DecorationImage(
+                            image: AssetImage('assets/bgimage2.webp'),
+                            fit: BoxFit.cover,
+                          ),
+                        ),
                       ),
                     ),
-    );
+                    Expanded(
+                      flex: 2,
+                      child: _loading
+                          ? const Center(child: CircularProgressIndicator())
+                          : _errorMessage != null
+                              ? _buildErrorWidget()
+                              : _configs.isEmpty
+                                  ? _buildNoConfigsWidget()
+                                  : _buildProfileView(context),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+        },
+      ),
+    ),
+  );
   }
 
-  // --- Widgets for Error and No Data States ---
+Widget _buildProfileView(BuildContext context) {
+  final config = _configs.first;
+  final String name = config['name'] ?? 'Unnamed POS';
+  final String address = config['shop_addrs'] ?? 'Not set';
+  final String shopCode = config['shop_code']?.toString() ?? 'Not set';
+  final double cash = (config['last_session_closing_cash'] ?? 0.0).toDouble();
+  final String shopGstNo = (config['shop_gst_no'] ?? 'Not set').toString();
+  final String shopPhoneNo = config['shop_phone_no']?.toString() ?? '-';
+   final dynamic adminIds = config['shop_admin_ids'];
+  final String shopOwnerName = (adminIds is List && adminIds.isNotEmpty && adminIds.first is Map)
+      ? (adminIds.first as Map)['name']?.toString() ?? 'Unknown'
+      : 'Unknown';
 
+  final dynamic rawDate = config['last_session_closing_date'];
+  final String date = (rawDate == false || rawDate == null || rawDate.toString() == 'false')
+      ? 'N/A'
+      : _formatDate(rawDate.toString());
+  final dynamic sessionRaw = config['current_session_state'];
+  final bool sessionState = sessionRaw is bool ? sessionRaw : sessionRaw.toString() == 'true';
+
+  // final bool sessionState = sessionInt == 1;
+
+
+  return  Padding(
+     
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      child: Column(
+     
+        children: [
+          // Logo and name/address section
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Logo
+              Container(
+                padding: const EdgeInsets.all(0),
+                child: const CircleAvatar(
+                  radius: 50,
+                  backgroundColor: Colors.white,
+                  backgroundImage: AssetImage('assets/rcslogo.png'),
+                ),
+              ),
+              const SizedBox(width: 16),
+              // Name and address
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                  ),
+                  Text(
+                    address,
+                    style: TextStyle(color: Colors.grey[700], fontSize: 16, fontWeight: FontWeight.w500),
+                  ),
+                    Text(
+                'GST No: $shopGstNo',
+                style: const TextStyle(fontSize: 14, fontFamily: 'Arial'),
+              ),
+              Text(
+                'Last Closed: $date',
+                style: const TextStyle(fontSize: 14, fontFamily: 'Arial'),
+              ),
+                ],
+              ),
+            
+            ],
+          ),
+          const SizedBox(height: 16), // A consistent space below the logo/text
+          Divider(color: Colors.grey.shade300, thickness: 1.2, height: 1),
+          const SizedBox(height: 12), // A consistent space below the divider
+          // POS Info section
+       
+  // POS Info section
+Row(
+  mainAxisAlignment: MainAxisAlignment.spaceAround,
+  children: [
+    _infoRow(Icons.phone, 'Phone', shopPhoneNo),
+    _infoRow(Icons.person, 'Owner', shopOwnerName),
+    _infoRow(Icons.monetization_on, 'Closing Cash', '₹${cash.toStringAsFixed(2)}'),
+  ],
+),
+const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ORDER SUMMARY
+              Expanded(
+                flex: 3,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                  
+_buildOrderLine(context, "Total Products", totalProducts, null),
+_buildOrderLine(context, "Total Customers With Credit", totalCreditCustomers, null),
+_buildOrderLine(context, "Total Sales Today", totalSalesCount, null),
+              
+                   
+                  ],
+                ),
+              ),
+
+              // TOTAL PRODUCTS
+             
+            ],
+          ),
+
+            const SizedBox(height: 10),
+        // ✅ The conditional button
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 19),
+            backgroundColor: sessionState ? const Color.fromARGB(255, 20, 98, 161) : const Color.fromARGB(255, 10, 110, 14), // Change color based on state
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500,fontFamily: "Arial"),
+          ),
+         onPressed: () {
+  // Use the correctly defined variables from your _buildProfileView method
+  final posId = config['id']; 
+// print("Selected POS ID: $shopCode");
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => HomePage(
+        shopCode: shopCode,
+        posConfig: config, // ✅ Pass the 'config' map as 'posConfig'
+        posId: posId,      // ✅ Pass the 'id' from the config map
+        sessionState: sessionState, // This variable is already correct
+      ),
+    ),
+  );
+},
+          child: Text(
+            sessionState =='opening_control' ? 'Continue Selling' : 'Start Billing',
+          ),
+        ),
+
+          // Optional: Footer Info
+          
+        ],
+      ),
+    );
+  
+  
+}
+  
+  
+
+Widget _infoRow(IconData icon, String label, String value) => Padding(
+  padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 0.0),
+  child: Column(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: [
+      Icon(icon, color: Colors.green[600], size: 28),
+      const SizedBox(height: 8),
+      Text(
+        label,
+        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        value,
+        style: const TextStyle(fontSize: 15, color: Colors.black87),
+      ),
+    ],
+  ),
+);
+
+Widget _buildOrderLine(BuildContext context, String item, int qty, double? price) {
+  IconData iconData;
+  Color iconColor;
+  Color iconBgColor;
+  Widget? destinationPage;
+
+  if (item.toLowerCase().contains('product')) {
+    iconData = Icons.inventory_2_rounded;
+    iconColor = Colors.white;
+    iconBgColor = Colors.green;
+    destinationPage = const Productstablepage();
+  } else if (item.toLowerCase().contains('credits')) {
+    iconData = Icons.person;
+    iconColor = Colors.white;
+    iconBgColor = Colors.green;
+    destinationPage = const CreditCustomersPage();
+  } else if (item.toLowerCase().contains('sales')) {
+    iconData = Icons.shopping_cart;
+    iconColor = Colors.white;
+    iconBgColor = Colors.green;
+    destinationPage = const OrderListPage();
+  } else {
+    iconData = Icons.info;
+    iconColor = Colors.white;
+    iconBgColor = Colors.grey;
+  }
+
+  Widget iconCircle = Container(
+    width: 40,
+    height: 40,
+    decoration: BoxDecoration(
+      color: iconBgColor,
+      shape: BoxShape.circle,
+    ),
+    child: Center(
+      child: Icon(
+        iconData,
+        color: iconColor,
+        size: 20,
+      ),
+    ),
+  );
+
+  return GestureDetector(
+    onTap: () {
+      if (destinationPage != null) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => destinationPage!),
+        );
+      }
+    },
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      margin: const EdgeInsets.symmetric(vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              iconCircle,
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      fontFamily: 'Arial',
+                      color: Color(0xFF4B4B7C),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '$qty ',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      fontFamily: 'Arial',
+                      color: Color(0xFF4B4B7C),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const Icon(
+            Icons.arrow_forward,
+            color: Color.fromARGB(255, 29, 29, 29),
+            size: 20,
+          ),
+        ],
+      ),
+    
+    
+    ),
+    
+  );
+}
+
+ 
   Widget _buildErrorWidget() {
     return Center(
       child: Padding(
@@ -307,11 +593,11 @@ class _POSConfigPageState extends State<POSConfigPage> {
             ),
             const SizedBox(height: 30),
             ElevatedButton.icon(
-              onPressed: fetchPOSConfigs, // Allows user to retry fetching data
+              onPressed: fetchPOSConfigs,
               icon: const Icon(Icons.refresh),
               label: const Text('Try Again'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color.fromARGB(255, 1, 139, 82),
+                backgroundColor: const Color(0xFF185A9D),
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 12),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -343,7 +629,7 @@ class _POSConfigPageState extends State<POSConfigPage> {
             ),
             const SizedBox(height: 30),
             ElevatedButton.icon(
-              onPressed: fetchPOSConfigs, // Allows user to refresh list
+              onPressed: fetchPOSConfigs,
               icon: const Icon(Icons.refresh),
               label: const Text('Refresh'),
               style: ElevatedButton.styleFrom(
@@ -356,142 +642,6 @@ class _POSConfigPageState extends State<POSConfigPage> {
           ],
         ),
       ),
-    );
-  }
-
-  // --- Widget for an individual POS Configuration Card ---
-  Widget _buildPOSConfigCard({
-    required String name,
-    required String address,
-    required double cash,
-    required String shopGstNo,
-    required String shopPhoneNo,
-    required String shopOwnerName,
-    required String date,
-    required dynamic sessionState,
-    required Map<String, dynamic> specificConfig, // <-- NEW: Pass the actual config map here
-  }) {
-    return Card(
-      elevation: 6, // Increased elevation for a floating effect
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: Colors.grey.shade200),
-        ),
-        padding: const EdgeInsets.all(18), // Slightly increased padding
-        child: Stack(
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              // mainAxisSize: MainAxisSize.min, // Optional: if content seems too large and causes overflow, uncomment this.
-              children: [
-                Text(
-                  name,
-                  style: const TextStyle(
-                    fontSize: 20, // Increased font size for name
-                    fontWeight: FontWeight.w800, // Make it bolder
-                    color: Color.fromARGB(255, 3, 0, 0),
-                    fontFamily: 'Arial',
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis, // Prevents overflow of long names
-                ),
-                const SizedBox(height: 10), // Increased spacing
-                _buildInfoText('Shop Incharge: ', shopOwnerName),
-                const SizedBox(height: 6),
-                _buildInfoText('Phone No: ', shopPhoneNo),
-                const SizedBox(height: 6),
-                _buildInfoText('Shop Address: ', address),
-                const SizedBox(height: 6),
-                _buildInfoText('Shop GST No: ', shopGstNo),
-                const SizedBox(height: 6),
-                _buildInfoText('Last Closing Cash: ', '₹${cash.toStringAsFixed(2)}'),
-                const SizedBox(height: 6),
-                _buildInfoText('Last Closing Date: ', date),
-                // Fix: Removed Spacer() which was causing unbounded height errors in GridView context
-                // Instead, a SizedBox is used for consistent spacing before the button.
-                const SizedBox(height: 10),
-
-                Align(
-                  alignment: Alignment.bottomRight, // Aligned to bottom-right
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color.fromARGB(255, 1, 139, 82),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 12), // Larger padding
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      elevation: 4, // Added elevation to button
-                    ),
-                  onPressed: () {
-  // ✅ Print address details from posConfig
-  print("Shop Address: ${specificConfig['shop_addrs']}");
-  print("Shop Phone: ${specificConfig['shop_phone_no']}");
-  print("Shop GST No: ${specificConfig['shop_gst_no']}");
-
-  Navigator.pushReplacement(
-    context,
-    MaterialPageRoute(
-      builder: (context) => HomePage(
-        posConfig: specificConfig,
-   
-      ),
-    ),
-  );
-},
-
-                    child: const Text('Resume',
-                        style: TextStyle(fontFamily: 'Arial', fontSize: 16, fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ],
-            ),
-            // Positioned status tag at the top-right corner
-            Positioned(
-              top: 0,
-              right: 0,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: getStatusColor(sessionState),
-                  borderRadius: const BorderRadius.only(
-                    topRight: Radius.circular(15), // Match card radius
-                    bottomLeft: Radius.circular(15), // Match card radius
-                  ),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), // Slightly larger padding
-                child: Text(
-                  getStatusText(sessionState),
-                  style: const TextStyle(color: Colors.white, fontSize: 13, fontFamily: 'Arial', fontWeight: FontWeight.w600),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // --- Helper for Info Text Rows ---
-  Widget _buildInfoText(String label, String value) {
-    return RichText(
-      text: TextSpan(
-        style: const TextStyle(
-          fontSize: 15,
-          fontFamily: 'Arial',
-          fontWeight: FontWeight.w500,
-          color: Color.fromARGB(185, 0, 0, 0),
-        ),
-        children: [
-          TextSpan(
-            text: label,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold), // Adjusted font size here too
-          ),
-          TextSpan(text: value),
-        ],
-      ),
-      maxLines: 1, // Crucial: Prevents overflow on small screens
-      overflow: TextOverflow.ellipsis, // Shows "..." if text is too long
     );
   }
 }

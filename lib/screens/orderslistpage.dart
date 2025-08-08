@@ -334,10 +334,18 @@ void _showOrderDetailsDialog(BuildContext context, Map<String, dynamic> order) {
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(106),
         child: AppBar(
-          backgroundColor: const Color.fromARGB(255, 1, 139, 82),
+         backgroundColor: Colors.transparent,
           elevation: 0,
           automaticallyImplyLeading: false,
-          flexibleSpace: SafeArea(
+            flexibleSpace: Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color.fromARGB(255, 44, 145, 113), Color(0xFF185A9D)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+          child: SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(5),
               child: Column(
@@ -389,13 +397,13 @@ void _showOrderDetailsDialog(BuildContext context, Map<String, dynamic> order) {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
                   Container(
                     height: 43,
                     margin: const EdgeInsets.symmetric(horizontal: 10),
                     decoration: BoxDecoration(
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(28),
                     ),
                     child: TextField(
                       onChanged: (value) {
@@ -419,6 +427,7 @@ void _showOrderDetailsDialog(BuildContext context, Map<String, dynamic> order) {
             ),
           ),
         ),
+      ),
       ),
       body: _orders.isEmpty
           ? const Center(child: Text('No orders found.'))

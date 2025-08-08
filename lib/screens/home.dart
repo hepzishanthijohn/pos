@@ -1,32 +1,44 @@
 import 'package:flutter/material.dart';
+
 import 'package:rcspos/components/bottonnavbar.dart';
 import 'package:rcspos/components/sidebar.dart';
 import 'package:rcspos/data/sampleproduct.dart';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
 import 'package:rcspos/localdb/product_sqlite_helper.dart';
 import 'package:rcspos/screens/cartpage.dart';
+import 'package:rcspos/screens/closeSession.dart';
 import 'package:rcspos/screens/customerpage.dart';
 import 'package:rcspos/screens/orderslistpage.dart';
+import 'package:rcspos/screens/posconfigpage.dart';
 import 'dart:async';
 import 'package:rcspos/screens/productpage.dart';
 import 'package:rcspos/screens/productstablepage.dart';
 import 'package:rcspos/utils/urls.dart';
 
 class HomePage extends StatefulWidget {
+  final int? productId;
   final Map<String, dynamic> posConfig;
   final String? categoryName;
   final int? categoryId;
+  final String? shopCode;
+  final bool sessionState; 
+  final int posId; // Add POS ID to identify the specific POS config
   
 
   const HomePage({
     Key? key,
     required this.posConfig,
     this.categoryName,
-    this.categoryId
+    this.shopCode,
+    this.productId,
+    this.categoryId,
+    required this.posId, // Required POS ID for the specific POS config
+     required this.sessionState,
   }) : super(key: key);
 
   @override
@@ -38,7 +50,8 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   String? _customerName;
   String? _customerPhone;
-
+ 
+  int totalProducts = 0;
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final Set<int> addedProductIds = {};
@@ -63,6 +76,8 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
 
+
+
     _customerName = widget.categoryName ?? '';
     _customerPhone = '';
 
@@ -75,7 +90,7 @@ class _HomePageState extends State<HomePage> {
 Future <void> syncWithServer() async {
   final productHelper = ProductSQLiteHelper();
  await ProductSQLiteHelper().updateStockAfterOrder(cart);
- 
+
 
 
   try {
@@ -86,7 +101,7 @@ Future <void> syncWithServer() async {
         ? sessionIdRaw
         : 'session_id=$sessionIdRaw';
 
-    final url = '${baseurl}api/product.product'; // adjust based on actual endpoint
+    final url = '${baseurl}api/product.template'; 
 
     final response = await http.get(
       Uri.parse(url),
@@ -97,6 +112,7 @@ Future <void> syncWithServer() async {
     );
 
     if (response.statusCode == 200) {
+      // print('Shop code: ${widget.shopCode}');
       final jsonData = jsonDecode(response.body);
       final List<Map<String, dynamic>> products = List<Map<String, dynamic>>.from(jsonData['result']);
       await productHelper.insertProducts(products);
@@ -146,15 +162,19 @@ void handleAddToCart(Map<String, dynamic> product) {
         addedProductIds.add(productId);
       }
     }
-
+  print('shopcode: ${widget.shopCode}');
     print("🛒 Current cart: ${jsonEncode(cart)}");
   });
 }
 
   Future<void> selectCustomer() async {
+  
   final result = await Navigator.push(
     context,
-    MaterialPageRoute(builder: (context) => CustomerPage()),
+    MaterialPageRoute(builder: (context) => CustomerPage(
+       posId: widget.posId,
+        sessionState: widget.sessionState,
+    )),
   );
 
   if (result != null && result is Map<String, dynamic>) {
@@ -166,7 +186,7 @@ void handleAddToCart(Map<String, dynamic> product) {
  
 Future<void> _onItemTapped(int index) async {
   setState(() => _selectedIndex = index);
-
+ 
   if (index == 1) {
     // Navigate to OrdersPage
     await Navigator.push(
@@ -177,8 +197,7 @@ Future<void> _onItemTapped(int index) async {
     final updatedCart = await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => Productstablepage(
-        onAddToCart: handleAddToCart,
-        addedProductIds: addedProductIds,
+       
         searchQuery: _searchQuery,
         showOnlyInStock: _filterMode == 'in_stock'
             ? true
@@ -196,27 +215,34 @@ Future<void> _onItemTapped(int index) async {
         addedProductIds.addAll(updatedCart.map((item) => item['id'] as int));
       });
     }
-  } else if (index == 3) {
+  }  else if (index == 3) {
+    // Await the result from the CartPage
     final updatedCart = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => CartPage(
-     
- 
-        cart: cart,
-        posConfig: widget.posConfig,
-        )),
+      MaterialPageRoute(
+        builder: (_) => CartPage(
+          shopCode: widget.shopCode ?? widget.posConfig['shop_code'],
+          productId: widget.productId ?? 0,
+          posId: widget.posId,
+          sessionState: widget.sessionState,
+          cart: cart, // Pass the current cart to CartPage
+          posConfig: widget.posConfig,
+        ),
+      ),
     );
 
+    // If a non-null result is received, update the cart and the addedProductIds set
     if (updatedCart != null && updatedCart is List<Map<String, dynamic>>) {
       setState(() {
         cart.clear();
-        cart.addAll(updatedCart);
+        cart.addAll(updatedCart); // Update the cart with the new list
         addedProductIds.clear();
-        addedProductIds.addAll(updatedCart.map((item) => item['id'] as int));
+        addedProductIds.addAll(updatedCart.map((item) => item['id'] as int)); // Rebuild the set
       });
     }
   }
 }
+
 
   @override
   Widget build(BuildContext context) {
@@ -234,211 +260,251 @@ Future<void> _onItemTapped(int index) async {
 
     return Scaffold(
       key: _scaffoldKey,
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(106),
-        child: AppBar(
-          backgroundColor: const Color.fromARGB(255, 1, 139, 82),
-          elevation: 0,
-          automaticallyImplyLeading: false,
-          flexibleSpace: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(5),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Top bar
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      // Menu
-                      IconButton(
-                        icon: const Icon(Icons.menu, color: Colors.white),
-                        onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-                      ),
-
-                      // Title
-                      const Text(
-                        'RCS POS',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontFamily: 'Arial',
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-
-                      // Right-side icons
-                      Row(
-                        children: [
-                          // Cart
-                          GestureDetector(
-                            onTap: () async {
-                              if (isMobile) {
-                                final updatedCart = await Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => CartPage(
-                                
-                                   
-                                      cart: cart,
-                                      posConfig: widget.posConfig,
-                                      ),
-                                  ),
-                                );
-
-                                if (updatedCart != null &&
-                                    updatedCart is List<Map<String, dynamic>>) {
-                                  setState(() {
-                                    cart.clear();
-                                    cart.addAll(updatedCart);
-                                    addedProductIds.clear();
-                                    addedProductIds.addAll(updatedCart.map((item) => item['id'] as int));
-                                  });
-                                }
-                              } else {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text("Cart is visible in side panel on desktop"),
-                                  ),
-                                );
-                              }
-                            },
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                const Icon(Icons.shopping_cart, color: Colors.white, size: 26),
-                                if (cart.isNotEmpty)
-                                  Positioned(
-                                    top: 4,
-                                    right: 4,
-                                    child: Container(
-                                      padding: const EdgeInsets.all(2),
-                                      decoration: const BoxDecoration(
-                                        color: Colors.red,
-                                        shape: BoxShape.circle,
-                                      ),
-                                      constraints: const BoxConstraints(
-                                        minWidth: 14,
-                                        minHeight: 14,
-                                      ),
-                                      child: Text(
-                                        cart.length.toString(),
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                          fontFamily: 'Arial',
-                                        ),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-
-                          // Filter Popup
-                          PopupMenuButton<String>(
-                            onSelected: (value) {
-                              setState(() {
-                                _filterLabel = value;
-                                // Update _filterMode correctly
-                                if (value == 'All') {
-                                  _filterMode = 'all';
-                                } else if (value == 'In Stock') {
-                                  _filterMode = 'in_stock';
-                                } else if (value == 'Out of Stock') {
-                                  _filterMode = 'out_of_stock';
-                                }
-                              });
-                            },
-                            itemBuilder: (context) => const [
-                              PopupMenuItem(value: 'All', child: Text('All')),
-                              PopupMenuItem(value: 'In Stock', child: Text('In Stock')),
-                              PopupMenuItem(value: 'Out of Stock', child: Text('Out of Stock')),
-                            ],
-                            child: Row(
-                              children: [
-                                const Icon(Icons.filter_list, color: Colors.white, size: 18),
-                                const SizedBox(width: 6),
-                                Text(
-                                  _filterLabel,
-                                  style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Arial'),
-                                ),
-                                const Icon(Icons.arrow_drop_down, color: Colors.white),
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(width: 6),
-                        ],
-                      ),
-                    ],
+appBar: PreferredSize(
+  preferredSize: const Size.fromHeight(70), // Adjust as needed
+  child: Container(
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        colors: [Color.fromARGB(255, 44, 145, 113), Color(0xFF185A9D)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ),
+    ),
+    child: SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // LEFT: Menu + Title
+            Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.menu, color: Colors.white),
+                  onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                  tooltip: 'Open Menu',
+                ),
+                   Container(
+      padding: const EdgeInsets.all(0),
+      decoration: BoxDecoration(
+        color: Colors.white,                     // White background
+        borderRadius: BorderRadius.circular(25),// Rounded corners
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1), // subtle shadow for depth
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Image.asset(
+        'assets/rcslogo.png',
+        height: 32,
+        width: 32,
+        fit: BoxFit.contain,
+      ),
+    ),
+    
+                const SizedBox(width: 8),
+                const Text(
+                  'RCS POS',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontFamily: 'Arial',
+                    fontWeight: FontWeight.bold,
                   ),
+                ),
+              ],
+            ),
 
-                  // Search Bar
-                  Container(
-                    height: 43,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: TextField(
-                      onChanged: (value) {
-                        setState(() => _searchQuery = value.toLowerCase());
-                      },
-                      decoration: const InputDecoration(
-                        hintText: 'What would you like to buy?',
-                        hintStyle: TextStyle(color: Colors.grey, fontFamily: 'Arial'),
-                        border: InputBorder.none,
-                        prefixIcon: Icon(Icons.search, color: Colors.grey),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 0, vertical: 10),
-                      ),
-                      style: const TextStyle(fontSize: 14),
-                    ),
+            // --- SPACE BETWEEN TITLE AND SEARCH ---
+            const SizedBox(width: 24),
+
+            // CENTER: Search bar (expand to fill space)
+            Expanded(
+              child: Container(
+                height: 36,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(28),
+                ),
+                child: TextField(
+                  onChanged: (value) {
+                    setState(() => _searchQuery = value.toLowerCase());
+                  },
+                  decoration: const InputDecoration(
+                    hintText: 'What would you like to buy?',
+                    hintStyle: TextStyle(color: Colors.grey, fontFamily: 'Arial'),
+                    border: InputBorder.none,
+                    prefixIcon: Icon(Icons.search, color: Colors.grey),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 0, vertical: 5),
                   ),
-                ],
+                  style: const TextStyle(fontSize: 14),
+                ),
               ),
             ),
-          ),
+
+            // --- RIGHT: Cart, More, etc. ---
+            const SizedBox(width: 24),
+
+            // Cart, optionally with badge
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.shopping_cart, color: Colors.white, size: 28),
+                  onPressed: () async {
+                     print('shopcode: ${widget.shopCode}');
+                    if (isMobile) {
+                      final updatedCart = await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => CartPage(
+                            shopCode: widget.shopCode ?? '',
+                            productId: widget.productId ?? 0,
+                            posId: widget.posId,
+                            sessionState: widget.sessionState,
+                            cart: cart,
+                            posConfig: widget.posConfig,
+                          ),
+                        ),
+                      );
+                      if (updatedCart != null &&
+                          updatedCart is List<Map<String, dynamic>>) {
+                        setState(() {
+                          cart.clear();
+                          cart.addAll(updatedCart);
+                          addedProductIds.clear();
+                          addedProductIds.addAll(
+                              updatedCart.map((item) => item['id'] as int));
+                        });
+                      }
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content:
+                              Text("Cart is visible in side panel on desktop"),
+                        ),
+                      );
+                    }
+                  },
+                ),
+                if (cart.isNotEmpty)
+                  Positioned(
+                    top: 8,
+                    right: 6,
+                    child: Container(
+                      padding: const EdgeInsets.all(0),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      constraints: const BoxConstraints(
+                        minWidth: 14,
+                        minHeight: 14,
+                      ),
+                      child: Text(
+                        cart.length.toString(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          fontFamily: 'Arial',
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+
+            const SizedBox(width: 9),
+
+            // More Options
+            PopupMenuButton<String>(
+              
+              icon: const Icon(Icons.more_vert, color: Colors.white),
+              onSelected: (value) async {
+                if (value == 'close') {
+                  final result = await showDialog(
+                    
+                    context: context,
+                    builder: (context) => CloseSessionDialog(
+                      posId: widget.posId,
+                      sessionState: widget.sessionState,
+                    ),
+                  );
+                  if (result == true) {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => const POSConfigPage(
+                                                    )),
+                    );
+                  }
+                }
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: 'close',
+                  child: Text('Close Session'),
+                ),
+              ],
+            ),
+            // Add other icons here as needed
+          ],
         ),
       ),
-     drawer: AppDrawer(posConfig: widget.posConfig),
-
-      body: Row(
-        children: [
-          Expanded(
-            flex: 3,
-            // Pass the derived actualShowOnlyInStock
-            child: ProductPage(
-  key: ValueKey(widget.categoryId), // ✅ Forces rebuild
-  categoryId: widget.categoryId,
-  categoryName: widget.categoryName,
-  onAddToCart: handleAddToCart,
-  addedProductIds: addedProductIds,
-  searchQuery: _searchQuery,
-  showOnlyInStock: actualShowOnlyInStock,
+    ),
+  ),
 ),
-
-          ),
-          if (isDesktop) const VerticalDivider(width: 1),
-          if (isDesktop)
-            Expanded(
-              flex: 5,
-              child: CartPage(
-            
-
-                posConfig: widget.posConfig,
-  cart: cart,
-  customerName: selectedCustomer?['name'],
-),
-
-            ),
-        ],
-        
+   drawer: AppDrawer(
+      posConfig: widget.posConfig,
+      posId: widget.posId,
+       sessionState: widget.sessionState,
       ),
-       bottomNavigationBar: CustomBottomNav(
+ 
+body: Container(
+  color: const Color.fromARGB(33, 219, 219, 219), // Set your desired background color here
+  child: Row(
+    children: [
+      Expanded(
+        flex: 3,
+        child: ProductPage(
+          key: ValueKey(widget.categoryId), // ✅ Forces rebuild
+          categoryId: widget.categoryId,
+          categoryName: widget.categoryName,
+          onAddToCart: handleAddToCart,
+          addedProductIds: addedProductIds,
+          searchQuery: _searchQuery,
+          showOnlyInStock: actualShowOnlyInStock,
+          onTotalProductsChanged: (count) {
+                setState(() {
+                  totalProducts = count;
+                });
+                print('Total Products: $count'); // for debugging
+              },
+        ),
+      ),
+      if (isDesktop) const VerticalDivider(width: 1),
+      if (isDesktop)
+        Expanded(
+          flex: 5,
+          child: CartPage(
+            shopCode: widget.shopCode ??'',
+            productId: widget.productId ?? 0,
+            posId: widget.posId,
+            sessionState: widget.sessionState,
+            posConfig: widget.posConfig,
+            cart: cart,
+            customerName: selectedCustomer?['name'],
+          ),
+        ),
+    ],
+  ),
+),
+     bottomNavigationBar: CustomBottomNav(
         selectedIndex: _selectedIndex,
         onTap: (index) => _onItemTapped(index),
 

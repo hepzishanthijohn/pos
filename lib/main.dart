@@ -4,6 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart'; // 👈 for web-safe init
 import 'package:path_provider/path_provider.dart'; // desktop/mobile only
+
+import 'package:rcspos/localdb/customersqlitehelper.dart';
+import 'package:rcspos/localdb/orders_sqlite_helper.dart';
+import 'package:rcspos/localdb/posconfigsqlitehelper.dart';
+import 'package:rcspos/localdb/product_sqlite_helper.dart';
 import 'package:rcspos/localdb/purchaseDbHelper.dart';
 
 import 'package:rcspos/screens/loginpage.dart';
@@ -13,7 +18,23 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // await PurchaseDBHelper().deleteExistingDatabase();
+   await OrderSQLiteHelper().init();
+   await Customersqlitehelper.instance.init();
+   
+  //  await ProductSQLiteHelper().clearProducts();
+//  await posConfigSQLiteHelper.instance.deleteDatabaseFile();
+// await posConfigSQLiteHelper.instance.database;
+  //  await Customersqlitehelper.instance.clearCustomersTable();
+
+
+// final purchaseDb = PurchaseDBHelper();
+// await purchaseDb.deleteAllPurchases();
+
+// final orderDb = OrderSQLiteHelper();
+// await orderDb.init(); // Only if not already initialized
+// orderDb.deleteAllOrders();
+
+
 //  await InvoiceDBHelper().deleteExistingDatabase();
 //  await InvoiceDBHelper().database;
 //  debugPrint("✅ Invoice database recreated successfully.");

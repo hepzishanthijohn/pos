@@ -1,30 +1,23 @@
-// productstablepage.dart
-import 'dart:convert';
-import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:hive/hive.dart';
-import 'package:http/http.dart' as http;
-import 'package:rcspos/localdb/pdtablesqlitehelper.dart'; // Assuming this is correct
-import 'package:rcspos/localdb/product_sqlite_helper.dart';
-import 'dart:math';
-import 'package:rcspos/utils/urls.dart'; // Assuming this provides your baseurl
+import 'package:rcspos/localdb/product_sqlite_helper.dart'; // Ensure this path is correct
 
 class Productstablepage extends StatefulWidget {
-  final Function(Map<String, dynamic>) onAddToCart;
-  final Set<int> addedProductIds;
+  final Function(Map<String, dynamic>)? onAddToCart;
+  final Set<int>? addedProductIds;
   final int? categoryId;
   final String? categoryName;
-  final String searchQuery;
+  
+  final String? searchQuery;
   final bool? showOnlyInStock; // This is the filter control from parent
 
   const Productstablepage({
     super.key,
-    required this.onAddToCart,
-    required this.addedProductIds,
+    this.onAddToCart,
+    this.addedProductIds,
     this.categoryId,
     this.categoryName,
-    required this.searchQuery,
+    this.searchQuery,
     this.showOnlyInStock,
   });
 
@@ -39,11 +32,8 @@ class _ProductstablepageState extends State<Productstablepage> {
   List<Map<String, dynamic>> _filteredAndSortedProducts = [];
   // Products visible on the current page
   List<Map<String, dynamic>> _paginatedProducts = [];
-  int startIndex = 0; // Initialize with a default value
-  int endIndex = 0;   // Initialize with a default value
 
   bool _loading = true;
-  Map<int, int> cartQuantities = {}; // Consider if this is still needed here
   int? _sortColumnIndex;
   bool _sortAscending = true;
 
@@ -61,8 +51,8 @@ class _ProductstablepageState extends State<Productstablepage> {
   @override
   void initState() {
     super.initState();
-    _currentSearchQuery = widget.searchQuery.toLowerCase(); // Ensure lowercase
-    _searchController.text = widget.searchQuery;
+  _currentSearchQuery = (widget.searchQuery ?? '').toLowerCase(); // Ensure lowercase
+    _searchController.text = widget.searchQuery ?? '';
     _currentShowOnlyInStock = widget.showOnlyInStock; // Initialize from widget
 
     // Set initial filter label based on parent prop
@@ -76,9 +66,9 @@ class _ProductstablepageState extends State<Productstablepage> {
     super.didUpdateWidget(oldWidget);
     bool shouldReapplyFilters = false;
 
-    if (widget.searchQuery.toLowerCase() != _currentSearchQuery) {
-      _currentSearchQuery = widget.searchQuery.toLowerCase();
-      _searchController.text = widget.searchQuery; // Update controller text
+    if ((widget.searchQuery ?? '').toLowerCase() != _currentSearchQuery) {
+      _currentSearchQuery =(widget.searchQuery ?? '').toLowerCase();
+      _searchController.text =(widget.searchQuery ?? ''); // Update controller text
       _currentPage = 0; // Reset page on search change
       shouldReapplyFilters = true;
     }
@@ -118,7 +108,6 @@ class _ProductstablepageState extends State<Productstablepage> {
     }
   }
 
-
   Future<void> _initializeData() async {
     setState(() => _loading = true);
     await _fetchRawProductsFromLocalDb();
@@ -130,12 +119,12 @@ class _ProductstablepageState extends State<Productstablepage> {
   Future<void> _fetchRawProductsFromLocalDb() async {
     try {
       final productDb = ProductSQLiteHelper();
-      final localProducts = await productDb.fetchProducts();
+   final localProducts = await productDb.fetchProducts(); // Fetches all products
       setState(() {
         _allProducts = localProducts;
       });
     } catch (e) {
-      showError('Failed to load products: $e');
+      _showError('Failed to load products from local DB: $e');
       setState(() {
         _allProducts = []; // Ensure it's empty on error
       });
@@ -158,15 +147,19 @@ class _ProductstablepageState extends State<Productstablepage> {
       }).toList();
     }
 
-    // 2. Apply Category Filter
-    if (widget.categoryId != null) {
+    // 2. Apply Category Filter (CORRECTED)
+    if (widget.categoryId != null && widget.categoryId != 0) { // Add check for 0 if it represents "All Categories"
       tempFiltered = tempFiltered.where((product) {
-        return product['categ_id'] is List &&
-            product['categ_id'].isNotEmpty &&
-            product['categ_id'][0] == widget.categoryId;
+        // Access the 'categ_id' map and then its 'id'
+        final categoryMap = product['categ_id'];
+        if (categoryMap is Map<String, dynamic> && categoryMap.containsKey('id')) {
+          return categoryMap['id'] == widget.categoryId;
+        }
+        return false; // Product doesn't have a valid category ID
       }).toList();
     }
 
+    // 3. Apply Stock Filter
     if (_currentShowOnlyInStock != null) {
       tempFiltered = tempFiltered.where((p) {
         final qty = p['qty_available'];
@@ -194,81 +187,95 @@ class _ProductstablepageState extends State<Productstablepage> {
         _currentPage = 0; // No pages if no products after filtering
       }
 
-      startIndex = _currentPage * _rowsPerPage;
-      endIndex = (startIndex + _rowsPerPage).clamp(0, _totalFilteredProductsCount);
+      final int startIndex = _currentPage * _rowsPerPage;
+      final int endIndex = (startIndex + _rowsPerPage).clamp(0, _totalFilteredProductsCount);
 
       _paginatedProducts = _filteredAndSortedProducts.sublist(startIndex, endIndex);
     });
   }
-// Add this method inside your _ProductstablepageState class
-void _sortData(List<Map<String, dynamic>> list) {
-  if (_sortColumnIndex == null) {
-    return; // No column selected for sorting
+
+  void _sortData(List<Map<String, dynamic>> list) {
+    if (_sortColumnIndex == null) {
+      return; // No column selected for sorting
+    }
+
+    list.sort((a, b) {
+      dynamic aValue;
+      dynamic bValue;
+
+      // Determine values for comparison based on _sortColumnIndex
+      // Ensure these column indices match your DataTable columns and their intended sort fields
+      switch (_sortColumnIndex) {
+        case 1: // Product Name
+          aValue = (a['display_name'] as String? ?? '').toLowerCase();
+          bValue = (b['display_name'] as String? ?? '').toLowerCase();
+          break;
+        case 2: // Product Code
+          aValue = (a['default_code'] is String && a['default_code'] != 'false' ? a['default_code'] as String : '').toLowerCase();
+          bValue = (b['default_code'] is String && b['default_code'] != 'false' ? b['default_code'] as String : '').toLowerCase();
+          break;
+        case 3: // Category (CORRECTED ACCESS)
+          aValue = (a['categ_id'] is Map && a['categ_id']['name'] != null)
+              ? a['categ_id']['name'].toString().toLowerCase()
+              : '';
+          bValue = (b['categ_id'] is Map && b['categ_id']['name'] != null)
+              ? b['categ_id']['name'].toString().toLowerCase()
+              : '';
+          break;
+        case 4: // Price
+          aValue = a['list_price']?.toDouble() ?? 0.0;
+          bValue = b['list_price']?.toDouble() ?? 0.0;
+          break;
+        case 5: // GST (Tax) - sorting by concatenated tax names
+          aValue = (a['taxes_id'] is List)
+              ? (a['taxes_id'] as List).map((tax) => tax is Map && tax['name'] != null ? tax['name'] as String : '').join(', ')
+              : '';
+          bValue = (b['taxes_id'] is List)
+              ? (b['taxes_id'] as List).map((tax) => tax is Map && tax['name'] != null ? tax['name'] as String : '').join(', ')
+              : '';
+          break;
+        case 6: // Stock
+          aValue = a['qty_available']?.toInt() ?? 0;
+          bValue = b['qty_available']?.toInt() ?? 0;
+          break;
+        default:
+          return 0; // For S.No or any non-sortable/unspecified columns, do nothing
+      }
+
+      int comparisonResult;
+      if (aValue is String && bValue is String) {
+        comparisonResult = aValue.compareTo(bValue);
+      } else if (aValue is num && bValue is num) {
+        comparisonResult = aValue.compareTo(bValue);
+      } else {
+        comparisonResult = 0; // Fallback for incomparable types, or handle as an error
+      }
+
+      // Apply sorting direction
+      return _sortAscending ? comparisonResult : -comparisonResult;
+    });
   }
 
-  list.sort((a, b) {
-    dynamic aValue;
-    dynamic bValue;
+  // void _showError(String message) {
+  //   if (mounted) {
+  //     setState(() => _loading = false);
+  //     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  //   }
+  // }
 
-    // Determine values for comparison based on _sortColumnIndex
-    // Ensure these column indices match your DataTable columns and their intended sort fields
-    switch (_sortColumnIndex) {
-      case 1: // Product Name
-        aValue = (a['display_name'] as String? ?? '').toLowerCase();
-        bValue = (b['display_name'] as String? ?? '').toLowerCase();
-        break;
-      case 2: // Product Code
-        aValue = (a['default_code'] is String && a['default_code'] != 'false' ? a['default_code'] as String : '').toLowerCase();
-        bValue = (b['default_code'] is String && b['default_code'] != 'false' ? b['default_code'] as String : '').toLowerCase();
-        break;
-      case 3: // Category
-        aValue = (a['categ_id'] is Map && a['categ_id']['name'] != null)
-            ? a['categ_id']['name'].toString().toLowerCase()
-            : '';
-        bValue = (b['categ_id'] is Map && b['categ_id']['name'] != null)
-            ? b['categ_id']['name'].toString().toLowerCase()
-            : '';
-        break;
-      case 4: // Price
-        aValue = a['list_price']?.toDouble() ?? 0.0;
-        bValue = b['list_price']?.toDouble() ?? 0.0;
-        break;
-      case 5: // GST (Tax) - sorting by concatenated tax names
-        aValue = (a['taxes_id'] is List)
-            ? (a['taxes_id'] as List).map((tax) => tax is Map && tax['name'] != null ? tax['name'] as String : '').join(', ')
-            : '';
-        bValue = (b['taxes_id'] is List)
-            ? (b['taxes_id'] as List).map((tax) => tax is Map && tax['name'] != null ? tax['name'] as String : '').join(', ')
-            : '';
-        break;
-      case 6: // Stock
-        aValue = a['qty_available']?.toInt() ?? 0;
-        bValue = b['qty_available']?.toInt() ?? 0;
-        break;
-      default:
-        // For S.No or any non-sortable/unspecified columns, do nothing
-        return 0;
-    }
+void _showError(String message) {
+  if (!mounted) return; // ❗ Ensure widget is still in the tree
 
-    int comparisonResult;
-    if (aValue is String && bValue is String) {
-      comparisonResult = aValue.compareTo(bValue);
-    } else if (aValue is num && bValue is num) {
-      comparisonResult = aValue.compareTo(bValue);
-    } else {
-      comparisonResult = 0; // Fallback for incomparable types, or handle as an error
-    }
+  setState(() => _loading = false);
 
-    // Apply sorting direction
-    return _sortAscending ? comparisonResult : -comparisonResult;
-  });
+  // ✅ Still check before using context
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(message)),
+  );
 }
-  void showError(String message) {
-    if (mounted) {
-      setState(() => _loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-    }
-  }
+
+
+
 
   // This `onSort` method now sorts `_filteredAndSortedProducts`
   void onSort(int columnIndex, bool ascending) {
@@ -286,6 +293,14 @@ void _sortData(List<Map<String, dynamic>> list) {
     return (_totalFilteredProductsCount / _rowsPerPage).ceil();
   }
 
+  // Define a TextStyle for header to avoid repetition
+  static const TextStyle _headerStyle = TextStyle(
+    color: Colors.white,
+    fontWeight: FontWeight.bold,
+    fontFamily: 'Arial',
+    fontSize: 14,
+  );
+
   @override
   Widget build(BuildContext context) {
     final bool isCompact = MediaQuery.of(context).size.shortestSide < 600;
@@ -293,10 +308,19 @@ void _sortData(List<Map<String, dynamic>> list) {
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        backgroundColor: const Color.fromARGB(255, 1, 139, 82),
+        backgroundColor: Colors.transparent,
         elevation: 0,
         toolbarHeight: isCompact ? 100 : 120,
         titleSpacing: 0,
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color.fromARGB(255, 44, 145, 113), Color(0xFF185A9D)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
         title: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: Column(
@@ -495,7 +519,7 @@ void _sortData(List<Map<String, dynamic>> list) {
                                       DataColumn(label: Text('Product Code', style: _headerStyle), onSort: onSort),
                                       DataColumn(label: Text('Category', style: _headerStyle), onSort: onSort),
                                       DataColumn(label: Text('Price', style: _headerStyle), numeric: true, onSort: onSort),
-                                      DataColumn(label: Text('Gst', style: _headerStyle), numeric: true, onSort: onSort),
+                                      DataColumn(label: Text('GST', style: _headerStyle), numeric: true, onSort: onSort), // Changed from Gst to GST for consistency
                                       DataColumn(label: Text('Stock', style: _headerStyle), numeric: true, onSort: onSort),
                                       DataColumn(label: Text('Actions', style: _headerStyle)),
                                     ],
@@ -509,31 +533,33 @@ void _sortData(List<Map<String, dynamic>> list) {
                                       final code = product['default_code'] is String && product['default_code'] != 'false'
                                           ? product['default_code'] as String
                                           : '-';
-                                      final stock = (product['qty_available']?.toInt() ?? 0).toInt();
-                                      final productId = product['id'];
-                                      final inCart = widget.addedProductIds.contains(productId);
-                                      final unit = (product['uom_id'] is List && product['uom_id'].length > 1)
-                                          ? '/${product['uom_id'][1]} técnicos'
-                                          : '';
-                                      final category = product['categ_id'] is Map && product['categ_id']['name'] != null
+                                      final stock = (product['qty_available']?.toInt() ?? 0); // Removed unnecessary .toInt()
+                                      // final productId = product['id']; // Not used in this snippet
+                                      // final inCart = widget.addedProductIds.contains(productId); // Not used here
+
+                                      // Corrected Category access
+                                      final category = (product['categ_id'] is Map && product['categ_id']['name'] != null)
                                           ? product['categ_id']['name'] as String
                                           : 'No Category';
 
+                                      // Corrected Tax access and handling
                                       final taxListRaw = (product['taxes_id'] is List)
                                           ? (product['taxes_id'] as List)
                                               .map((tax) {
                                                 if (tax is Map && tax['name'] != null) {
                                                   return tax['name'] as String;
-                                                } else if (tax is int) {
-                                                  return 'Tax ID: $tax';
                                                 }
-                                                return 'N/A Tax Item';
+                                                return ''; // Return empty string for invalid tax items
                                               })
-                                              .where((name) => name != 'N/A Tax Item' && !name.startsWith('Tax ID: '))
+                                              .where((name) => name.isNotEmpty) // Filter out empty strings
                                               .join(', ')
-                                          : "s";
+                                          : ''; // Default to empty string if not a list
 
                                       final taxList = taxListRaw.isNotEmpty ? taxListRaw : 'No Tax';
+
+                                      final unit = (product['uom_id'] is List && product['uom_id'].length > 1)
+                                          ? '/${product['uom_id'][1]} técnicos'
+                                          : '';
 
                                       return DataRow(
                                         cells: [
@@ -577,10 +603,9 @@ void _sortData(List<Map<String, dynamic>> list) {
                                                       crossAxisAlignment: CrossAxisAlignment.start,
                                                       children: [
                                                         Text("Price: ₹${product['list_price'] ?? '0'}"),
-                                                        Text(
-                                                            "Category: ${category}"), // Use already parsed category
-                                                        Text("Taxes: ${taxList}"), // Use already parsed taxList
-                                                        Text("Stock: ${stock}"),
+                                                        Text("Category: $category"), // Use already parsed category
+                                                        Text("Taxes: $taxList"), // Use already parsed taxList
+                                                        Text("Stock: $stock"),
                                                       ],
                                                     ),
                                                     actions: [
@@ -606,8 +631,8 @@ void _sortData(List<Map<String, dynamic>> list) {
           if (!_loading && _totalFilteredProductsCount > 0)
             _buildFooter(
               _totalFilteredProductsCount,
-              startIndex,
-              endIndex,
+              (_currentPage * _rowsPerPage), // startIndex of current page
+              (_currentPage * _rowsPerPage + _paginatedProducts.length), // endIndex of current page
               _totalPages,
               isCompact,
             ),
@@ -663,7 +688,7 @@ void _sortData(List<Map<String, dynamic>> list) {
           Row(
             children: [
               Text(
-                '${startIndex + 1}-${endIndex} of $totalCount',
+                '${startIndex + 1}-${endIndex} of $totalCount', // +1 for 1-based indexing
                 style: TextStyle(fontSize: isCompact ? 13 : 14, color: Colors.black87),
               ),
               SizedBox(width: isCompact ? 12 : 16),
@@ -680,7 +705,7 @@ void _sortData(List<Map<String, dynamic>> list) {
                 color: _currentPage > 0 ? Colors.black87 : Colors.grey,
               ),
               Text(
-                '${_currentPage + 1} / $_totalPages',
+                '${_currentPage + 1} / $totalPages',
                 style: TextStyle(fontSize: isCompact ? 13 : 14, color: Colors.black87),
               ),
               IconButton(
@@ -702,10 +727,3 @@ void _sortData(List<Map<String, dynamic>> list) {
     );
   }
 }
-
-const TextStyle _headerStyle = TextStyle(
-  fontFamily: "Arial",
-  fontWeight: FontWeight.w500,
-  fontSize: 16,
-  color: Colors.white,
-);

@@ -4,49 +4,41 @@ import 'package:sqlite3/sqlite3.dart';
 import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:intl/intl.dart';
-// If you're using path_provider for Flutter, uncomment this:
-// import 'package:path_provider/path_provider.dart';
+import 'package:path_provider/path_provider.dart';
 
 class OrderSQLiteHelper {
   static final OrderSQLiteHelper _instance = OrderSQLiteHelper._internal();
   factory OrderSQLiteHelper() => _instance;
+
+  OrderSQLiteHelper._internal();
+
   late Database _db;
 
-  OrderSQLiteHelper._internal() {
-    String dbPath;
-    // For Flutter, use getApplicationDocumentsDirectory() or getExternalStorageDirectory()
-    // For now, keeping Directory.current.path as per your original code's context.
-    dbPath = p.join(Directory.current.path, 'orders.db');
+  Future<void> init() async {
+    final Directory documentsDir = await getApplicationDocumentsDirectory();
+    final String dbPath = p.join(documentsDir.path, 'orders.db');
+    print("📁 Database Path: $dbPath");
 
-    print('DEBUG: Database path: $dbPath');
     try {
       _db = sqlite3.open(dbPath);
-      print('DEBUG: Database opened successfully.');
+      print("✅ Database opened successfully.");
     } catch (e) {
-      print('ERROR opening DB: $e');
+      print("❌ Failed to open database: $e");
       rethrow;
     }
 
-    // --- CRITICAL CHANGE HERE ---
-    // Instead of _createTable() then _performMigration() then recreateTableWithUniqueConstraint()
-    // We make recreateTableWithUniqueConstraint() the primary entry point for ensuring schema.
-    // It will always ensure the latest schema is applied (by dropping and recreating if needed).
-    // This is good for development, less ideal for production without careful data handling.
-    _ensureLatestSchema(); // Call this new method for robust migration.
-
-    print('DEBUG: Orders table initialized/migrated.');
+    _ensureLatestSchema();
   }
 
   Database get db => _db;
 
   void _createTable() {
-    // This defines the LATEST schema for your 'orders' table
     db.execute('''
       CREATE TABLE IF NOT EXISTS orders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         order_id TEXT UNIQUE,
         total REAL,
-        tax REAL DEFAULT 0.0, -- Ensure 'tax' column is defined here with a default
+        tax REAL DEFAULT 0.0,
         customer_name TEXT,
         customer_phone TEXT,
         payment_method TEXT,
@@ -59,15 +51,12 @@ class OrderSQLiteHelper {
     print('DEBUG: Orders table created/checked (latest schema).');
   }
 
-  // New method to check and perform migration
   void _ensureLatestSchema() {
     print('DEBUG: Checking database schema...');
-    // Get existing column names for the 'orders' table
     final existingColumns = db.select("PRAGMA table_info(orders);")
         .map((row) => row['name'] as String)
         .toList();
 
-    // Define the columns that should exist in the latest schema
     const requiredColumns = [
       'id', 'order_id', 'total', 'tax', 'customer_name', 'customer_phone',
       'payment_method', 'paid_amount', 'change_amount', 'discount', 'date'
@@ -75,11 +64,9 @@ class OrderSQLiteHelper {
 
     bool needsMigration = false;
     if (existingColumns.isEmpty) {
-      // Table doesn't exist, needs creation (which _createTable handles, but recreateTable handles it robustly)
       needsMigration = true;
       print('DEBUG: Orders table does not exist or is empty. Migration needed.');
     } else {
-      // Check if any required column is missing
       for (var col in requiredColumns) {
         if (!existingColumns.contains(col)) {
           needsMigration = true;
@@ -97,14 +84,9 @@ class OrderSQLiteHelper {
     }
   }
 
-
-  // This method now serves as the "perform migration" step
   void recreateTableWithUniqueConstraint() {
     print('DEBUG: Starting table recreation/migration...');
 
-    // 1. Safely retrieve existing data.
-    // ONLY select columns that are GUARANTEED to exist in older schemas.
-    // Do NOT select 'tax' here if an old database might not have it.
     final List<Map<String, dynamic>> oldRows = [];
     try {
       final oldRowsResultSet = db.select('''
@@ -123,37 +105,29 @@ class OrderSQLiteHelper {
       }).toList());
       print('DEBUG: Successfully retrieved old data.');
     } on SqliteException catch (e) {
-      // If the table doesn't exist at all, or a selected column is missing,
-      // this SELECT will fail. We catch it and proceed as if no old data exists.
       print('DEBUG: Could not retrieve old data (table might not exist or old schema): $e');
-      // No oldRows means we'll just create a fresh table.
     }
 
-
-    // 2. Drop the old table (if it exists)
     db.execute('DROP TABLE IF EXISTS orders');
     print('DEBUG: Old table dropped (if existed).');
 
-    // 3. Create the new table with the LATEST schema
-    _createTable(); // This uses the CREATE TABLE IF NOT EXISTS statement with 'tax'
+    _createTable();
     print('DEBUG: New table created with latest schema.');
 
-    // 4. Re-insert the old data into the new table
     if (oldRows.isNotEmpty) {
       for (var oldRow in oldRows) {
-        // When inserting, provide default values for new columns (like 'tax')
-        // if they weren't present in the old data.
-        insertOrder(
+        insertOrderFromFields(
           orderId: oldRow['order_id'] as String,
           total: (oldRow['total'] as num?)?.toDouble() ?? 0.0,
-          tax: (oldRow['tax'] as num?)?.toDouble() ?? 0.0, // This will be 0.0 if 'tax' wasn't in oldRow
+          tax: (oldRow['tax'] as num?)?.toDouble() ?? 0.0,
           customerName: oldRow['customer_name'] as String? ?? 'Guest',
           customerPhone: oldRow['customer_phone'] as String? ?? '',
           paymentMethod: oldRow['payment_method'] as String? ?? 'Unknown',
           paidAmount: (oldRow['paid_amount'] as num?)?.toDouble() ?? 0.0,
           changeAmount: (oldRow['change_amount'] as num?)?.toDouble() ?? 0.0,
           discount: (oldRow['discount'] as num?)?.toDouble() ?? 0.0,
-          date: oldRow['date'] as String?,
+         date: oldRow['date'] as String? ?? '',
+
         );
       }
       print('DEBUG: Re-inserted ${oldRows.length} old orders.');
@@ -164,7 +138,7 @@ class OrderSQLiteHelper {
     print('✅ Orders table recreated/migrated with distinct order_id and updated schema.');
   }
 
-  void insertOrder({
+   Future<void> insertOrderFromFields({
     required String orderId,
     required double total,
     required double tax,
@@ -174,38 +148,25 @@ class OrderSQLiteHelper {
     required double paidAmount,
     required double changeAmount,
     required double discount,
-    String? date,
-  }) {
-    final stmt = db.prepare('''
+    required String date,
+  }) async {
+    _db.execute('''
       INSERT INTO orders (
         order_id, total, tax, customer_name, customer_phone,
         payment_method, paid_amount, change_amount, discount, date
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''');
-
-    try {
-      stmt.execute([
-        orderId,
-        total,
-        tax, // Value for the 'tax' column is now guaranteed to be provided
-        customerName,
-        customerPhone,
-        paymentMethod,
-        paidAmount,
-        changeAmount,
-        discount,
-        date ?? DateTime.now().toIso8601String(),
-      ]);
-      print('✅ Order $orderId inserted.');
-    } on SqliteException catch (e) {
-      if (e.message.contains('UNIQUE constraint failed')) {
-        print('⚠ Order $orderId already exists. Skipping insert.');
-      } else {
-        print('❌ Error inserting order: $e');
-      }
-    } finally {
-      stmt.dispose();
-    }
+    ''', [
+      orderId,
+      total,
+      tax,
+      customerName,
+      customerPhone,
+      paymentMethod,
+      paidAmount,
+      changeAmount,
+      discount,
+      date,
+    ]);
   }
 
   void updateOrder({
@@ -258,8 +219,55 @@ class OrderSQLiteHelper {
     return result.first['count'] > 0;
   }
 
+  // --- MODIFIED METHOD: getTodaysPaymentMethodTotals ---
+  Map<String, dynamic> getTodaysPaymentMethodTotals() {
+    final String todayDateString = DateFormat('yyyy-MM-dd').format(DateTime.now());
+
+    final Map<String, dynamic> totals = { // Changed to dynamic
+      'cash': 0.0,
+      'bank': 0.0,
+      'card': 0.0,
+      'totalOrdersAmount': 0.0,
+      'totalOrdersCount': 0, // Added for count
+    };
+
+    // Query to get totals by payment method for today (sum of paid_amount)
+    final paymentMethodResults = db.select('''
+      SELECT payment_method, SUM(paid_amount) AS total_paid
+      FROM orders
+      WHERE substr(date, 1, 10) = ? -- Extract YYYY-MM-DD from date column
+      GROUP BY payment_method
+    ''', [todayDateString]);
+
+    for (final row in paymentMethodResults) {
+      final String? method = row['payment_method'] as String?;
+      final double totalPaid = (row['total_paid'] as num?)?.toDouble() ?? 0.0;
+      if (method != null) {
+        final normalizedMethod = method.toLowerCase();
+        if (totals.containsKey(normalizedMethod)) {
+          totals[normalizedMethod] = totalPaid;
+        }
+      }
+    }
+
+    // Query to get overall sum of 'total' and 'count' for today
+    final overallDailyResults = db.select('''
+      SELECT SUM(total) AS daily_total, COUNT(id) AS daily_count
+      FROM orders
+      WHERE substr(date, 1, 10) = ?
+    ''', [todayDateString]);
+
+    if (overallDailyResults.isNotEmpty) {
+        totals['totalOrdersAmount'] = (overallDailyResults.first['daily_total'] as num?)?.toDouble() ?? 0.0;
+        totals['totalOrdersCount'] = (overallDailyResults.first['daily_count'] as int?) ?? 0; // Get the count
+    }
+
+
+    print('DEBUG: Today\'s Payment Totals and Count: $totals');
+    return totals;
+  }
+
   void printAllOrders() {
-    // Make sure this SELECT also lists all columns in the order expected by the print statement.
     final results = db.select('SELECT id, order_id, total, tax, customer_name, customer_phone, payment_method, paid_amount, change_amount, discount, date FROM orders ORDER BY id DESC');
 
     if (results.isEmpty) {
@@ -296,7 +304,7 @@ class OrderSQLiteHelper {
         '${(row['id'] ?? '').toString().padRight(6)} | '
         '${(row['order_id'] ?? '').toString().padRight(15)} | '
         '₹${(row['total'] ?? 0.0).toStringAsFixed(2).padRight(8)} | '
-        '₹${(row['tax'] ?? 0.0).toStringAsFixed(2).padRight(6)} | ' // Access 'tax'
+        '₹${(row['tax'] ?? 0.0).toStringAsFixed(2).padRight(6)} | '
         '${(row['customer_name'] ?? '').toString().padRight(20)} | '
         '${(row['customer_phone'] ?? '').toString().padRight(14)} | '
         '${(row['payment_method'] ?? '').toString().padRight(14)} | '
@@ -311,7 +319,6 @@ class OrderSQLiteHelper {
   }
 
   List<Map<String, dynamic>> getAllOrders() {
-    // Explicitly list all columns to avoid issues if schema changes drastically later
     final result = db.select('SELECT id, order_id, total, tax, customer_name, customer_phone, payment_method, paid_amount, change_amount, discount, date FROM orders ORDER BY id DESC');
     final List<String> columnNames = result.columnNames;
 
@@ -328,4 +335,14 @@ class OrderSQLiteHelper {
     db.dispose();
     print('DEBUG: Database closed.');
   }
+
+  void deleteAllOrders() {
+  try {
+    db.execute('DELETE FROM orders;');
+    print('🗑️ All orders deleted successfully.');
+  } catch (e) {
+    print('❌ Failed to delete orders: $e');
+  }
+}
+
 }

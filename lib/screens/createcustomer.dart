@@ -1,9 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:hive/hive.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
+import 'package:rcspos/components/snackbar_helper.dart';
+import 'package:rcspos/data/customerdata.dart';
+import 'package:rcspos/localdb/customersqlitehelper.dart';
+import 'package:rcspos/screens/customerpage.dart';
 import 'package:rcspos/utils/urls.dart'; // Ensure this path is correct
 
 class CreateCustomerPage extends StatefulWidget {
@@ -14,6 +21,10 @@ class CreateCustomerPage extends StatefulWidget {
 }
 
 class _CreateCustomerPageState extends State<CreateCustomerPage> {
+  late final Customersqlitehelper customerHelper;
+  // No need for _customerDB if customerHelper is the instance
+  // final _customerDB = Customersqlitehelper.instance; // Keep this if you prefer, but customerHelper is the same
+
   final _formKey = GlobalKey<FormState>();
   final nameController = TextEditingController();
   final phoneController = TextEditingController();
@@ -22,15 +33,74 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
   final street2Controller = TextEditingController();
   final cityController = TextEditingController();
   final zipController = TextEditingController();
-  final vatController = TextEditingController();
-
+  final vatController = TextEditingController(); // For GSTIN
+  bool isLoading = false;
   // New controllers for credit request
   final creditDaysController = TextEditingController();
   final creditAmountController = TextEditingController();
   final reasonController = TextEditingController();
 
   String _selectedType = 'person';
-  bool _createCreditRequest = false; // New state for the checkbox
+  bool _createCreditRequest = false;
+  bool _isSaving = false;
+
+  List<Map<String, String>> tamilNaduDistricts = [
+    {'district': 'Ariyalur', 'state': 'Tamil Nadu'},
+    {'district': 'Chengalpattu', 'state': 'Tamil Nadu'},
+    {'district': 'Chennai', 'state': 'Tamil Nadu'},
+    {'district': 'Coimbatore', 'state': 'Tamil Nadu'},
+    {'district': 'Cuddalore', 'state': 'Tamil Nadu'},
+    {'district': 'Dharmapuri', 'state': 'Tamil Nadu'},
+    {'district': 'Dindigul', 'state': 'Tamil Nadu'},
+    {'district': 'Erode', 'state': 'Tamil Nadu'},
+    {'district': 'Kallakurichi', 'state': 'Tamil Nadu'},
+    {'district': 'Kanchipuram', 'state': 'Tamil Nadu'},
+    {'district': 'Kanyakumari', 'state': 'Tamil Nadu'},
+    {'district': 'Karur', 'state': 'Tamil Nadu'},
+    {'district': 'Krishnagiri', 'state': 'Tamil Nadu'},
+    {'district': 'Madurai', 'state': 'Tamil Nadu'},
+    {'district': 'Mayiladuthurai', 'state': 'Tamil Nadu'},
+    {'district': 'Nagapattinam', 'state': 'Tamil Nadu'},
+    {'district': 'Namakkal', 'state': 'Tamil Nadu'},
+    {'district': 'Nilgiris', 'state': 'Tamil Nadu'},
+    {'district': 'Perambalur', 'state': 'Tamil Nadu'},
+    {'district': 'Pudukkottai', 'state': 'Tamil Nadu'},
+    {'district': 'Ramanathapuram', 'state': 'Tamil Nadu'},
+    {'district': 'Ranipet', 'state': 'Tamil Nadu'},
+    {'district': 'Salem', 'state': 'Tamil Nadu'},
+    {'district': 'Sivaganga', 'state': 'Tamil Nadu'},
+    {'district': 'Tenkasi', 'state': 'Tamil Nadu'},
+    {'district': 'Thanjavur', 'state': 'Tamil Nadu'},
+    {'district': 'Theni', 'state': 'Tamil Nadu'},
+    {'district': 'Thoothukudi', 'state': 'Tamil Nadu'},
+    {'district': 'Tiruchirappalli', 'state': 'Tamil Nadu'},
+    {'district': 'Tirunelveli', 'state': 'Tamil Nadu'},
+    {'district': 'Tirupathur', 'state': 'Tamil Nadu'},
+    {'district': 'Tiruppur', 'state': 'Tamil Nadu'},
+    {'district': 'Tiruvallur', 'state': 'Tamil Nadu'},
+    {'district': 'Tiruvannamalai', 'state': 'Tamil Nadu'},
+    {'district': 'Tiruvarur', 'state': 'Tamil Nadu'},
+    {'district': 'Vellore', 'state': 'Tamil Nadu'},
+    {'district': 'Viluppuram', 'state': 'Tamil Nadu'},
+    {'district': 'Virudhunagar', 'state': 'Tamil Nadu'},
+  ];
+
+  Map<String, String>? selectedDistrict;
+
+  final TextEditingController districtController = TextEditingController();
+  final TextEditingController pincodeController = TextEditingController();
+
+ 
+
+@override
+void initState() {
+  super.initState();
+
+  customerHelper = Customersqlitehelper.instance;
+   
+_syncUnsyncedCustomers();
+}
+
 
   @override
   void dispose() {
@@ -41,308 +111,250 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
     street2Controller.dispose();
     cityController.dispose();
     zipController.dispose();
-    vatController.dispose();
-    // Dispose new controllers
+    vatController.dispose(); // Dispose GST controller
     creditDaysController.dispose();
     creditAmountController.dispose();
     reasonController.dispose();
     super.dispose();
   }
 
-  Widget _buildTextField(
-    TextEditingController controller,
-    String labelText,
-    IconData icon, {
-    String? hintText,
-    TextInputType keyboardType = TextInputType.text,
-    int? maxLength,
-    int? maxLines,
-    List<TextInputFormatter>? inputFormatters,
-    String? Function(String?)? validator,
-    bool required = false,
-    bool enabled = true, // Added enabled property
-  }) {
-    return TextFormField(
-      controller: controller,
-      keyboardType: keyboardType,
-      maxLength: maxLength,
-      inputFormatters: inputFormatters,
-      enabled: enabled, // Apply enabled property
-      decoration: InputDecoration(
-        labelText: labelText,
-        hintText: hintText,
-        border: const OutlineInputBorder(),
-        prefixIcon: Icon(icon),
-        counterText: maxLength != null ? '' : null,
-        labelStyle: const TextStyle(fontFamily: 'Arial'),
-        hintStyle: const TextStyle(fontFamily: 'Arial'),
-        errorStyle: const TextStyle(fontFamily: 'Arial'),
-      ),
-      validator: (v) {
-        if (required && (v == null || v.trim().isEmpty)) {
-          return '$labelText is required';
-        }
-        if (validator != null) {
-          return validator(v);
-        }
-        return null;
-      },
-      style: const TextStyle(fontFamily: 'Arial'),
-      autovalidateMode: (validator != null || required)
-          ? AutovalidateMode.onUserInteraction
-          : AutovalidateMode.disabled,
-    );
-  }
-
-  List<Widget> _buildCompanyFields({bool isMobile = false, bool? leftColumn}) {
-    List<Widget> fields = [];
-    if (isMobile) {
-      fields = [
-        _buildTextField(contactAddressController, 'Contact Address', Icons.location_on,
-            hintText: 'Building, Street, Area', required: true),
-        const SizedBox(height: 10),
-        _buildTextField(street2Controller, 'Suite/Unit (optional)', Icons.meeting_room,
-            hintText: 'Apartment, Suite, Unit, Building'),
-        const SizedBox(height: 10),
-        _buildTextField(cityController, 'City', Icons.location_city,
-            hintText: 'e.g., Chennai', required: true),
-        const SizedBox(height: 10),
-        _buildTextField(zipController, 'ZIP', Icons.local_post_office,
-            keyboardType: TextInputType.number,
-            maxLength: 6,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            validator: (v) {
-              if (v == null || v.trim().isEmpty) return 'ZIP is required';
-              if (v.trim().length != 6) return 'ZIP must be 6 digits';
-              return null;
-            },
-            required: true),
-        const SizedBox(height: 10),
-        _buildTextField(vatController, 'VAT / GSTIN (optional)', Icons.confirmation_number,
-            hintText: 'Enter VAT/GSTIN number'),
-      ];
-    } else {
-      if (leftColumn == true) {
-        fields = [
-          _buildTextField(contactAddressController, 'Contact Address', Icons.location_on,
-              hintText: 'Building, Street, Area', required: true),
-          const SizedBox(height: 10),
-          _buildTextField(cityController, 'City', Icons.location_city,
-              hintText: 'e.g., Chennai', required: true),
-        ];
-      } else {
-        fields = [
-          _buildTextField(street2Controller, 'Suite/Unit (optional)', Icons.meeting_room,
-              hintText: 'Apartment, Suite, Unit, Building'),
-          const SizedBox(height: 10),
-          _buildTextField(zipController, 'ZIP', Icons.local_post_office,
-              keyboardType: TextInputType.number,
-              maxLength: 6,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              validator: (v) {
-                if (v == null || v.trim().isEmpty) return 'ZIP is required';
-                if (v.trim().length != 6) return 'ZIP must be 6 digits';
-                return null;
-              },
-              required: true),
-        ];
-      }
-    }
-    return fields;
-  }
 
   Future<bool> _createCustomer(Map<String, dynamic> customerData) async {
-    final box = await Hive.openBox('login');
-    final raw = box.get('session_id') as String?;
-    final session = raw!.contains('session_id=') ? raw : 'session_id=$raw';
-
-    final uri = Uri.parse('${baseurl}/mobile/create_customers');
-    final headers = {
-      HttpHeaders.contentTypeHeader: 'application/x-www-form-urlencoded',
-      HttpHeaders.cookieHeader: session,
-    };
-
-    final formBody = customerData.map((k, v) => MapEntry(k, v?.toString() ?? ''));
-
     try {
-      final response = await http.post(uri, headers: headers, body: formBody);
-      debugPrint('Response status: ${response.statusCode}');
-      debugPrint('Response body: ${response.body}');
-
-      if (response.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Customer created successfully!', style: TextStyle(fontFamily: 'Arial')),
-              backgroundColor: Colors.green),
-        );
-        return true;
-      } else {
-        String errorMessage = 'Unknown error';
-        try {
-          final decodedBody = json.decode(response.body);
-          errorMessage = decodedBody['error']['message'] ?? 'Unknown error (no message in JSON)';
-        } catch (e) {
-          errorMessage =
-              'Server returned non-JSON response (Status: ${response.statusCode}). Raw: ${response.body.substring(0, response.body.length > 200 ? 200 : response.body.length)}...';
-        }
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('Failed to create customer: $errorMessage', style: TextStyle(fontFamily: 'Arial')),
-              backgroundColor: Colors.red),
-        );
-        return false;
-      }
+      final localId = await customerHelper.insertLocalCustomer(customerData);
+      debugPrint('✅ Customer created locally with ID: $localId');
+      return true;
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('An error occurred: $e', style: TextStyle(fontFamily: 'Arial')), backgroundColor: Colors.red),
-      );
-      debugPrint('Exception during customer creation: $e');
+      debugPrint('❌ Error creating customer locally: $e');
       return false;
     }
   }
+Future<void> _syncUnsyncedCustomers() async {
+  final unsyncedCustomers = customerHelper.fetchUnsyncedCustomers();
 
-  void _onCreatePressed() async {
-    if (!_formKey.currentState!.validate()) {
-      // If validation fails, scroll to the first invalid field
-      Scrollable.ensureVisible(
-        _formKey.currentContext!,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeIn,
-        alignment: 0.5,
-      );
-      return;
-    }
-
-    final name = nameController.text.trim();
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 10),
-        title: Column(
-          children: const [
-            Icon(Icons.help_outline, size: 48, color: Color(0xFF018B52)),
-            SizedBox(height: 10),
-            Text(
-              'Confirmation',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontFamily: 'Arial',
-                fontWeight: FontWeight.bold,
-                fontSize: 20,
-                color: Color(0xFF018B52),
-              ),
-            ),
-          ],
-        ),
-        content: Text(
-          'Are you sure you want to create Customer "$name"?',
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontFamily: 'Arial', fontSize: 16),
-        ),
-        actionsAlignment: MainAxisAlignment.center,
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.grey[700],
-              textStyle: const TextStyle(fontFamily: 'Arial', fontSize: 16),
-            ),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton.icon(
-            icon: const Icon(Icons.check_circle_outline),
-            label: const Text('Yes, Create'),
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF018B52),
-              foregroundColor: Colors.white,
-              textStyle: const TextStyle(fontFamily: 'Arial', fontWeight: FontWeight.bold),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    final newCustomerData = {
-      'name': name,
-      'phone': phoneController.text.trim(),
-      if (emailController.text.trim().isNotEmpty) 'email': emailController.text.trim(),
-      'company_type': _selectedType,
-      if (_selectedType == 'company') 'contact_address': contactAddressController.text.trim(),
-      if (_selectedType == 'company') 'street2': street2Controller.text.trim(),
-      if (_selectedType == 'company') 'city': cityController.text.trim(),
-      if (_selectedType == 'company') 'zip': zipController.text.trim(),
-      if (_selectedType == 'company') 'vat': vatController.text.trim(),
-      // Add credit request fields conditionally
-      if (_createCreditRequest) ...{
-        'create_credit_request': 'true', // As a string 'true'
-        'req_credit_days': creditDaysController.text.trim(), // Send as string, server will parse to int
-        'req_credit_amount': creditAmountController.text.trim(), // Send as string, server will parse to float
-        'reason': reasonController.text.trim(),
-      }
-    };
-
-    debugPrint('Creating customer with: $newCustomerData');
-
-    final success = await _createCustomer(newCustomerData);
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 10),
-        title: Column(
-          children: [
-            Icon(
-              success ? Icons.check_circle_outline : Icons.error_outline,
-              size: 48,
-              color: success ? const Color(0xFF018B52) : Colors.red,
-            ),
-            const SizedBox(height: 10),
-            Text(
-              success ? 'Customer Created' : 'Creation Failed',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontFamily: 'Arial',
-                fontWeight: FontWeight.bold,
-                fontSize: 20,
-                color: success ? const Color(0xFF018B52) : Colors.red,
-              ),
-            ),
-          ],
-        ),
-        content: Text(
-          success
-              ? 'Customer "$name" has been created successfully.'
-              : 'Failed to create customer "$name". Please try again.',
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontFamily: 'Arial', fontSize: 16),
-        ),
-        actionsAlignment: MainAxisAlignment.center,
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx); // Close dialog
-              if (success) Navigator.pop(context, true); // Also close Create page
-            },
-            style: TextButton.styleFrom(
-              foregroundColor: success ? const Color(0xFF018B52) : Colors.red,
-              textStyle: const TextStyle(fontFamily: 'Arial', fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
+  if (unsyncedCustomers.isEmpty) {
+    debugPrint('No unsynced customers to upload.');
+    return;
   }
 
+  final List<Map<String, dynamic>> payload = unsyncedCustomers.map((customer) {
+    final customerData = Map<String, dynamic>.from(customer);
+    customerData.remove('id');
+    if (customerData['phone'] is String && customerData['phone'].isNotEmpty) {
+      try {
+        customerData['phone'] = int.parse(customerData['phone']);
+      } catch (e) {
+        debugPrint('Error parsing phone number for customer: ${customerData['name']}');
+      }
+    }
+    return customerData;
+  }).toList();
+  
+  debugPrint('Payload being sent to server: ${jsonEncode(payload)}');
+
+  final box = await Hive.openBox('login');
+  final sessionId = box.get('session_id');
+  if (sessionId == null) {
+    debugPrint('❌ No session ID available for syncing customers.');
+    return;
+  }
+
+  try {
+    final response = await http.post(
+      Uri.parse('$baseurl/mobile/create_customers'),
+      headers: {
+        HttpHeaders.cookieHeader: sessionId,
+        HttpHeaders.contentTypeHeader: 'application/json',
+      },
+      body: jsonEncode(payload),
+    );
+
+    debugPrint('Server responded with Status Code: ${response.statusCode}');
+    debugPrint('Server Response Body: ${response.body}');
+
+    if (response.statusCode == 200) {
+      final List<dynamic> responseJson = json.decode(response.body);
+
+      if (responseJson.isNotEmpty && responseJson.first is Map && responseJson.first.containsKey('id')) {
+        debugPrint('✅ All unsynced customers synced successfully.');
+        for (final customerResponse in responseJson) {
+          final int? localId = customerResponse['local_id'];
+          final int? remoteId = customerResponse['id'];
+
+          if (localId != null && remoteId != null) {
+            await customerHelper.markCustomerAsSynced(localId, remoteId);
+          }
+        }
+      } else {
+        debugPrint('❌ Sync failed despite 200 OK. Server response was invalid.');
+      }
+    } else {
+      final responseBody = json.decode(response.body);
+      final errorMessage = responseBody['error']['message'] ?? 'Unknown server error.';
+      debugPrint('❌ Failed to sync customers. Status code: ${response.statusCode}');
+      debugPrint('Server Error: $errorMessage');
+    }
+  } catch (e) {
+    debugPrint('❌ Error during bulk customer sync: $e');
+  }
+}
+
+void _onCreatePressed() async {
+  if (!_formKey.currentState!.validate()) {
+    Scrollable.ensureVisible(
+      _formKey.currentContext!,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeIn,
+      alignment: 0.5,
+    );
+    return;
+  }
+
+  final name = nameController.text.trim();
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 10),
+      title: Column(
+        children: const [
+          Icon(Icons.help_outline, size: 48, color: Color(0xFF018B52)),
+          SizedBox(height: 10),
+          Text(
+            'Confirmation',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFamily: 'Arial',
+              fontWeight: FontWeight.bold,
+              fontSize: 20,
+              color: Color(0xFF018B52),
+            ),
+          ),
+        ],
+      ),
+      content: Text(
+        'Are you sure you want to create Customer "$name"?',
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontFamily: 'Arial', fontSize: 16),
+      ),
+      actionsAlignment: MainAxisAlignment.center,
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          style: TextButton.styleFrom(
+            foregroundColor: Colors.grey[700],
+            textStyle: const TextStyle(fontFamily: 'Arial', fontSize: 16),
+          ),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton.icon(
+          icon: const Icon(Icons.check_circle_outline),
+          label: const Text('Yes, Create'),
+          onPressed: () => Navigator.pop(ctx, true),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF018B52),
+            foregroundColor: Colors.white,
+            textStyle: const TextStyle(fontFamily: 'Arial', fontWeight: FontWeight.bold),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  if (confirmed != true) return;
+
+  String fullAddress = [
+    contactAddressController.text.trim(),
+    street2Controller.text.trim(),
+    cityController.text.trim(),
+    zipController.text.trim()
+  ].where((part) => part.isNotEmpty).join(', ');
+
+  final newCustomerData = {
+    'name': name.trim(),
+    'phone': phoneController.text.trim().toString(),
+    'email': emailController.text.trim().isNotEmpty ? emailController.text.trim() : null,
+    'company_type': _selectedType,
+    'contact_address': fullAddress,
+    if (_selectedType == 'company' && vatController.text.trim().isNotEmpty)
+      'gst_number': vatController.text.trim(),
+
+    if (_createCreditRequest) ...{
+      'create_credit_request': 'true',
+      'req_credit_days': creditDaysController.text.trim(),
+      'req_credit_amount': creditAmountController.text.trim(),
+      'reason': reasonController.text.trim(),
+    }
+  };
+  debugPrint('Attempting to create customer locally with: $newCustomerData');
+
+  final localSuccess = await _createCustomer(newCustomerData);
+
+ if (localSuccess) {
+    // debugPrint('✅ Customer created locally with ID: $localId');
+    final connectivityResult = await (Connectivity().checkConnectivity());
+
+    // Call the bulk sync function instead of a single sync.
+    if (connectivityResult.isNotEmpty && !connectivityResult.contains(ConnectivityResult.none)) {
+      debugPrint('Device is online. Attempting to sync all unsynced customers.');
+      await _syncUnsyncedCustomers();
+    }
+  }
+
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 10),
+      title: Column(
+        children: [
+          Icon(
+            localSuccess ? Icons.check_circle_outline : Icons.error_outline,
+            size: 48,
+            color: localSuccess ? const Color(0xFF018B52) : Colors.red,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            localSuccess ? 'Customer Created' : 'Creation Failed',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFamily: 'Arial',
+              fontWeight: FontWeight.bold,
+              fontSize: 20,
+              color: localSuccess ? const Color(0xFF018B52) : Colors.red,
+            ),
+          ),
+        ],
+      ),
+      content: Text(
+        localSuccess
+            ? 'Customer "$name" has been created locally and queued for sync.'
+            : 'Failed to create customer "$name" locally. Please try again.',
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontFamily: 'Arial', fontSize: 16),
+      ),
+      actionsAlignment: MainAxisAlignment.center,
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.pop(ctx);
+            if (localSuccess) {
+              Navigator.pop(context, true);
+            }
+          },
+          style: TextButton.styleFrom(
+            foregroundColor: localSuccess ? const Color(0xFF018B52) : Colors.red,
+            textStyle: const TextStyle(fontFamily: 'Arial', fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
+}
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 600;
@@ -361,8 +373,8 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
           fontFamily: 'Arial',
         ),
       ),
-      content: SizedBox( // Use SizedBox with explicit width for dialog content
-        width: isMobile ? double.maxFinite : 650, // double.maxFinite is better than double.infinity for constraints
+      content: SizedBox(
+        width: isMobile ? double.maxFinite : 650,
         child: SingleChildScrollView(
           child: Form(
             key: _formKey,
@@ -400,7 +412,7 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                                 street2Controller.clear();
                                 cityController.clear();
                                 zipController.clear();
-                                vatController.clear();
+                                vatController.clear(); // Clear GST
                               });
                             },
                             activeColor: const Color.fromARGB(255, 1, 139, 82),
@@ -426,7 +438,8 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                 const SizedBox(height: 10),
 
                 // Basic Customer Info
-                _buildTextField(nameController, 'Full Name', Icons.person, hintText: 'Enter customer\'s full name', required: true),
+                _buildTextField(nameController, 'Full Name', Icons.person,
+                    hintText: 'Enter customer\'s full name', required: true),
                 const SizedBox(height: 10),
                 _buildTextField(phoneController, 'Phone Number', Icons.phone,
                     keyboardType: TextInputType.phone,
@@ -437,7 +450,7 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                       if (v.length != 10) return 'Must be exactly 10 digits';
                       return null;
                     },
-                    hintText: 'e.g., 9876543210 (10 digits)', required: true), // Made phone required
+                    hintText: 'e.g., 9876543210 (10 digits)', required: true),
                 const SizedBox(height: 10),
                 _buildTextField(emailController, 'Email (optional)', Icons.email,
                     keyboardType: TextInputType.emailAddress,
@@ -449,12 +462,9 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                       return RegExp(pattern).hasMatch(t) ? null : 'Enter a valid email';
                     },
                     hintText: 'e.g., customer@example.com'),
-               
 
                 // Company-specific fields
                 if (_selectedType == 'company') ...[
-                 
-                 
                   const SizedBox(height: 10),
                   isMobile
                       ? Column(
@@ -478,7 +488,7 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                 ],
 
                 // --- Credit Request Section ---
-               
+
                 CheckboxListTile(
                   title: const Text(
                     'Request Credit',
@@ -503,7 +513,7 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                   },
                   activeColor: const Color.fromARGB(255, 1, 139, 82),
                   checkColor: Colors.white,
-                  contentPadding: EdgeInsets.zero, // Remove default padding
+                  contentPadding: EdgeInsets.zero,
                 ),
 
                 if (_createCreditRequest) ...[
@@ -532,7 +542,7 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                     'Credit Amount',
                     Icons.currency_rupee,
                     keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly], // Or allow decimals if needed
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                     hintText: 'e.g., 50000',
                     validator: (v) {
                       if (_createCreditRequest && (v == null || v.trim().isEmpty)) {
@@ -563,7 +573,6 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                     required: true,
                   ),
                 ],
-                // --- End Credit Request Section ---
               ],
             ),
           ),
@@ -594,4 +603,149 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
       ],
     );
   }
+
+
+    Widget _buildTextField(
+    TextEditingController controller,
+    String labelText,
+    IconData icon, {
+    String? hintText,
+    TextInputType keyboardType = TextInputType.text,
+    int? maxLength,
+    int? maxLines,
+    List<TextInputFormatter>? inputFormatters,
+    String? Function(String?)? validator,
+    bool required = false,
+    bool enabled = true,
+  }) {
+    return TextFormField(
+      controller: controller,
+      keyboardType: keyboardType,
+      maxLength: maxLength,
+      inputFormatters: inputFormatters,
+      enabled: enabled,
+      decoration: InputDecoration(
+        labelText: labelText,
+        hintText: hintText,
+        border: const OutlineInputBorder(),
+        prefixIcon: Icon(icon),
+        counterText: maxLength != null ? '' : null,
+        labelStyle: const TextStyle(fontFamily: 'Arial'),
+        hintStyle: const TextStyle(fontFamily: 'Arial'),
+        errorStyle: const TextStyle(fontFamily: 'Arial'),
+      ),
+      validator: (v) {
+        if (required && (v == null || v.trim().isEmpty)) {
+          return '$labelText is required';
+        }
+        if (validator != null) {
+          return validator(v);
+        }
+        return null;
+      },
+      style: const TextStyle(fontFamily: 'Arial'),
+      autovalidateMode: (validator != null || required)
+          ? AutovalidateMode.onUserInteraction
+          : AutovalidateMode.disabled,
+    );
+  }
+
+  List<Widget> _buildCompanyFields({bool isMobile = false, bool? leftColumn}) {
+    List<Widget> fields = [];
+    if (isMobile) {
+      fields = [
+        _buildTextField(contactAddressController, 'Contact Address', Icons.location_on,
+            hintText: 'Building, Street, Area', required: true),
+        const SizedBox(height: 10),
+        _buildTextField(street2Controller, 'Street (optional)', Icons.meeting_room,
+            hintText: 'Street'),
+        const SizedBox(height: 10),
+        DropdownButtonFormField<Map<String, String>>(
+          value: selectedDistrict,
+          items: tamilNaduDistricts.map((districtData) {
+            final displayName = '${districtData['district']}, ${districtData['state']}';
+            return DropdownMenuItem<Map<String, String>>(
+              value: districtData,
+              child: Text(displayName),
+            );
+          }).toList(),
+          onChanged: (value) {
+            setState(() {
+              selectedDistrict = value;
+              cityController.text = '${value?['district']}, ${value?['state']}';
+            });
+          },
+          decoration: const InputDecoration(
+            labelText: 'District',
+            prefixIcon: Icon(Icons.location_city),
+            hintText: 'e.g., Chennai, Tamil Nadu',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 10),
+        _buildTextField(zipController, 'ZIP', Icons.local_post_office,
+            keyboardType: TextInputType.number,
+            maxLength: 6,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            validator: (v) {
+              if (v == null || v.trim().isEmpty) return 'ZIP is required';
+              if (v.trim().length != 6) return 'ZIP must be 6 digits';
+              return null;
+            },
+            required: true),
+        const SizedBox(height: 10),
+        _buildTextField(vatController, 'VAT / GSTIN (optional)', Icons.confirmation_number,
+            hintText: 'Enter VAT/GSTIN number'),
+      ];
+    } else {
+      if (leftColumn == true) {
+        fields = [
+          _buildTextField(contactAddressController, 'Contact Address', Icons.location_on,
+              hintText: 'Building, Street, Area', required: true),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<Map<String, String>>(
+            value: selectedDistrict,
+            items: tamilNaduDistricts.map((districtData) {
+              final displayName = '${districtData['district']}, ${districtData['state']}';
+              return DropdownMenuItem<Map<String, String>>(
+                value: districtData,
+                child: Text(displayName),
+              );
+            }).toList(),
+            onChanged: (value) {
+              setState(() {
+                selectedDistrict = value;
+                cityController.text = '${value?['district']}, ${value?['state']}';
+              });
+            },
+            decoration: const InputDecoration(
+              labelText: 'District',
+              prefixIcon: Icon(Icons.location_city),
+              hintText: 'e.g., Chennai, Tamil Nadu',
+              border: OutlineInputBorder(),
+            ),
+          )
+        ];
+      } else {
+        fields = [
+          _buildTextField(street2Controller, 'Street (optional)', Icons.meeting_room,
+              hintText: 'Street'),
+          const SizedBox(height: 10),
+          _buildTextField(zipController, 'ZIP', Icons.local_post_office,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              validator: (v) {
+                if (v == null || v.trim().isEmpty) return 'ZIP is required';
+                if (v.trim().length != 6) return 'ZIP must be 6 digits';
+                return null;
+              },
+              required: true),
+        ];
+      }
+    }
+    return fields;
+  }
+
+
 }

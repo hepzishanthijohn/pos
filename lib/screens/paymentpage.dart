@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
+import 'package:intl/intl.dart';
 import 'package:rcspos/localdb/orders_sqlite_helper.dart';
 import 'package:rcspos/localdb/product_sqlite_helper.dart';
 import 'package:rcspos/screens/RazorpayPaymentPage.dart';
@@ -11,27 +12,46 @@ import 'package:rcspos/screens/payment_option_tile.dart';
 import 'package:rcspos/utils/razorpay_web_launcher.dart';
 
 class PaymentPage extends StatefulWidget {
+  final int productId;
   final double totalAmount;
-
+  final bool sessionState; 
+  final int posId; 
+  final String shopCode;
   final String? customerName;
   final String? customerPhone;
-    final Map<String, dynamic> posConfig;  // ✅ new
-final List<Map<String, dynamic>> cart;
+  final Map<String, dynamic> posConfig;
+  final List<Map<String, dynamic>> cart;
 
+  // ✅ Add tax breakdown fields
+
+
+final double? sgstAmount;
+final double? cgstAmount;
+final double? totalTaxAmount;
 
   const PaymentPage({
     Key? key,
+    required this.posId, 
+    required this.shopCode,
+    required this.productId,
+    required this.sessionState,
     required this.totalAmount,
-    this.customerName,
     required this.cart,
-  
-    required this.posConfig, 
- 
+    required this.posConfig,
+    this.customerName,
     this.customerPhone,
+  
+
+    // ✅ Required tax breakdown
+    this.sgstAmount,
+     this.cgstAmount,
+     this.totalTaxAmount,
   }) : super(key: key);
 
   @override
-  
+   void initState() {
+    print('shopCode: $shopCode');
+   }
   State<PaymentPage> createState() => _PaymentPageState();
 }
 
@@ -50,6 +70,34 @@ class _PaymentPageState extends State<PaymentPage> {
   bool get isPaymentReady =>
       (isCashChecked || isBankChecked || isCardChecked) &&
       totalPaid >= widget.totalAmount;
+
+Future<int> getLastOrderNumber() async {
+  final box = await Hive.openBox('order_data');
+  return box.get('last_order_number', defaultValue: 0) as int;
+}
+
+/// Set new last order number in Hive
+Future<void> setLastOrderNumber(int number) async {
+  final box = await Hive.openBox('order_data');
+  await box.put('last_order_number', number);
+}
+
+
+Future<String> generateNextOrderId() async {
+  int lastNumber = await getLastOrderNumber();
+  int newNumber = lastNumber + 1;
+
+  final year = DateFormat('yyyy').format(DateTime.now());
+  final sequenceStr = newNumber.toString().padLeft(8, '0'); // zero pad to 8 digits
+
+  // Compose final order id string
+  final orderId = '${widget.shopCode}_${year}_$sequenceStr';
+
+  // Persist updated last number
+  await setLastOrderNumber(newNumber);
+
+  return orderId;
+}
 
   void _onPaymentChanged(String method, double amount) {
     setState(() {
@@ -90,7 +138,7 @@ void _handleManualPaymentSuccess() async {
 }
 
 void _handlePayment() async {
-  final orderId = DateTime.now().millisecondsSinceEpoch.toString();
+  final orderId = await generateNextOrderId();
 
   double paidAmountCombined = cashAmount + bankAmount + cardAmount;
 
@@ -124,23 +172,23 @@ void _handlePayment() async {
 
   print('🧾 Total GST: ₹${totalTax.toStringAsFixed(2)}');
 
-OrderSQLiteHelper().insertOrder(
-  orderId: orderId,
-  total: widget.totalAmount,
-  tax: totalTax,
-  customerName: widget.customerName ?? 'Guest',
-  customerPhone: widget.customerPhone ?? '',
+OrderSQLiteHelper().insertOrderFromFields(
+  orderId: orderId,                                // String
+  total: widget.totalAmount,                       // double
+  tax: totalTax,                                   // double
+  customerName: widget.customerName ?? 'Guest',    // String
+  customerPhone: widget.customerPhone ?? '',       // String
   paymentMethod: isCardChecked
       ? 'Card'
       : isCashChecked
           ? 'Cash'
           : isBankChecked
               ? 'Bank'
-              : 'Unknown',
-  paidAmount: paidAmountCombined,
-  changeAmount: 0.0,
-  discount: 0.0,
-  date: DateTime.now().toIso8601String(),
+              : 'Unknown',                            // String
+  paidAmount: paidAmountCombined,                  // double
+  changeAmount: 0.0,                               // double
+  discount: 0.0,                                   // double
+  date: DateTime.now().toIso8601String(),          // String
 );
 
 
@@ -205,31 +253,41 @@ OrderSQLiteHelper().insertOrder(
       );
     },
   );
+  
   // After the dialog is dismissed, navigate to the invoice page
-  Navigator.of(context).pushReplacement( // Use pushReplacement to prevent going back
-    MaterialPageRoute(
-      builder: (context) => InvoicePage(
-        orderId: orderId,
-        total: widget.totalAmount,
-        gst: totalTax,
-        customerName: widget.customerName ?? 'Guest',
-        customerPhone: widget.customerPhone ?? '',
-        paymentMode: isCardChecked
-            ? 'Card'
-            : isCashChecked
-                ? 'Cash'
-                : isBankChecked
-                    ? 'Bank'
-                    : 'Unknown',
-        paidCash: cashAmount,
-        paidBank: bankAmount,
-        paidCard: cardAmount,
-        cart: widget.cart,
-        posConfig: widget.posConfig,
-      ),
+ Navigator.of(context).pushReplacement(
+  MaterialPageRoute(
+    builder: (context) => InvoicePage(
+      productId: widget.productId,
+      posId: widget.posId,
+      sessionState: widget.sessionState,
+      orderId: orderId,
+      total: widget.totalAmount,
+     
+      customerName: widget.customerName ?? 'Guest',
+      customerPhone: widget.customerPhone ?? '',
+      paymentMode: isCardChecked
+          ? 'Card'
+          : isCashChecked
+              ? 'Cash'
+              : isBankChecked
+                  ? 'Bank'
+                  : 'Unknown',
+      paidCash: cashAmount,
+      paidBank: bankAmount,
+      paidCard: cardAmount,
+      cart: widget.cart,
+      posConfig: widget.posConfig,
+
+      // ✅ Add these three required arguments:
+  sgstAmount: widget.sgstAmount ?? 0.0,
+  cgstAmount: widget.cgstAmount ?? 0.0,
+  totalTaxAmount: widget.totalTaxAmount ?? 0.0,
+
     ),
-  );
-  // --- END: MODAL AND NAVIGATION LOGIC ADDED HERE ---
+  ),
+);
+ // --- END: MODAL AND NAVIGATION LOGIC ADDED HERE ---
 }
 
 void storeSuccessfulOrder({
@@ -252,17 +310,26 @@ void storeSuccessfulOrder({
 }
 
 void _startRazorpayPayment() {
-  // Navigate to the RazorpayPaymentPage
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (context) => RazorpayPaymentPage(
-        totalAmount: widget.totalAmount, // Pass the total amount
-        customerName: widget.customerName ?? 'Guest', // Pass the customer name
-        customerPhone: widget.customerPhone ?? '', // Pass the customer phone
-      ),
-    ),
+  launchRazorpayCheckout(
+    amount: widget.totalAmount,
+    key: widget.posConfig['razorpay_api_key'] ?? 'rzp_test_AqRRFQaXY603FG',
+    name: widget.customerName ?? 'Guest',
+    phone: widget.customerPhone ?? '',
+    email: '', 
   );
+
+  // After successful payment (you may want to await a real callback instead of delay)
+  Future.delayed(Duration(seconds: 2), () {
+    setState(() {
+      isCardChecked = true;   // Make sure card is checked
+      isCashChecked = false;
+      isBankChecked = false;
+      cashAmount = 0.0;       
+      bankAmount = 0.0;
+      cardAmount = widget.totalAmount;  
+    });
+    _handlePayment();
+  });
 }
 
 
@@ -271,7 +338,8 @@ void _startRazorpayPayment() {
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
-        backgroundColor: const Color.fromARGB(255, 1, 139, 82),
+         backgroundColor: Colors.transparent,
+        
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
@@ -284,6 +352,15 @@ void _startRazorpayPayment() {
           ),
           const SizedBox(width: 10),
         ],
+         flexibleSpace: Container(
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        colors: [Color.fromARGB(255, 44, 145, 113), Color(0xFF185A9D)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ),
+    ),
+    ),
       ),
       body: Column(
         children: [
